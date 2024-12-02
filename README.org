@@ -3,7 +3,7 @@
 #+AUTHOR: zyt
 #+email: zytbit@gmail.com
 
-The emacs package for [[https://www.wireshark.org/][wireshark/tshark]], inspired by [[https://termshark.io/][termshark]].
+The emacs package for [[https://www.wireshark.org/][wireshark/tshark]], inspired by [[https://termshark.io/][termshark]] and [[https://github.com/apconole/pcap-mode][pcap mode]]. 
 * Install
 	#+begin_src emacs-lisp
 	  (use-package eshark
