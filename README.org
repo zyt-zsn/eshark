@@ -1,0 +1,43 @@
+#+title: eshark - shark for Emacs
+
+#+AUTHOR: zyt
+#+email: zytbit@gmail.com
+
+The emacs package for [[https://www.wireshark.org/][wireshark/tshark]], inspired by [[https://termshark.io/][termshark]].
+* Install
+	#+begin_src emacs-lisp
+	  (use-package eshark
+		:commands (eshark-toggle)
+		:straight
+		'(
+		  :type git
+		  :host github
+		  :repo "zyt-zsn/eshark"
+		  )
+		)
+	#+end_src
+* Usage
+** start
+	#+begin_src emacs-lisp
+	  M-x eshark-toggle
+	#+end_src
+
+** toggle follow-mode
+	#+begin_src emacs-lisp
+	  M-x eshark-toggle-follow-mode
+	#+end_src
+
+* Customizable variables
+
+** tshark-capture-temp-file
+
+	Temporarily generated pcap file.
+** eshark-display-filter
+
+	Tshark display filters, refer to [[https://tshark.dev/analyze/packet_hunting/packet_hunting/][tshark.dev]]
+
+** eshark-max-extract-pdml-cnt
+
+	max pdml record cnt per extraction.
+* Screenshort
+	
