@@ -72,6 +72,44 @@
 	)
   )
 
+(defun eshark-select-intface()
+  (let* (
+		 (intfs-output
+		  (with-temp-buffer
+			(shell-command "tshark -D" (current-buffer))
+			(buffer-substring-no-properties (point-min) (point-max))
+			)
+		  )
+		 (option-list
+		  (--keep
+		   (progn
+			 (string-match "[[:digit:]]+\.\s\\(.*\\)\s(\\(.*\\))" it)
+			 (cons (match-string 2 it) (match-string 1 it))
+			 )
+		   (split-string intfs-output "\n" 'omit-null)
+		   )
+		  )
+		 )
+	(regexp-quote
+	 (alist-get
+	  (completing-read
+	   "Interface to capture: "
+	   option-list
+	   (lambda(arg)
+		 t
+		 )
+	   nil
+	   nil
+	   t
+	   )
+	  option-list
+	  nil
+	  nil
+	  'string=
+	  )
+	 )
+	)
+  )
 ;;;###autoload
 (defun eshark-toggle()
   (interactive)
@@ -98,7 +136,7 @@
 					   :buffer eshark-buffer-name
 					   :coding 'utf-8
 					   :command
-					   (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D5FFB044-EADB-42ED-9A27-DB408505F1EC} -l -P -w %s" tshark-capture-temp-file))
+					   (list "sh" "-c" (format "tshark -i %s -l -P -w %s" (eshark-select-intface) tshark-capture-temp-file))
 					   ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
 					   ;; :filter #'eshark-filter
 					   )
