@@ -124,7 +124,6 @@
 			  (progn
 				(if pdml-ht (clrhash pdml-ht))
 				(setq cashed-largest-pdml-number 0)
-				(eshark--retrive-pdml-bg)
 				(erase-buffer)
 				(basic-save-buffer)
 				;; (setq-local zyt/real-time-sniff-minor-mode t)
@@ -142,6 +141,7 @@
 					   )
 					  )
 				(eshark-reset-detail-buffer)
+				(eshark--retrive-pdml-bg)
 				)
 			  )
 			(setq zyt/real-time-sniffing t)
@@ -421,6 +421,7 @@
 			 (setq buffer-read-only nil)
 			 (erase-buffer)
 			 (insert eshark-hex-buffer-str)
+			 (setq eshark-hex-buffer-str "")
 			 (if (and highlight-pos highlight-size)
 				 (eshark-highlight-hex-portion highlight-pos highlight-size)
 			   )
