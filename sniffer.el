@@ -76,7 +76,9 @@
   (let* (
 		 (intfs-output
 		  (with-temp-buffer
-			(shell-command "tshark -D" (current-buffer))
+			(let ((coding-system-for-read 'utf-8))
+			  (shell-command "tshark -D" (current-buffer))
+			)
 			(buffer-substring-no-properties (point-min) (point-max))
 			)
 		  )
