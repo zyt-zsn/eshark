@@ -54,7 +54,9 @@
 (defvar eshark-detail-process nil)
 (defconst eshark-detail-buffer-name "*Packet detail info*")
 (defconst eshark-packet-pdml-buffer-name "*Packet pdml*")
-(defconst eshark-packet-hex-buffer-name "*Packet hex*")
+(defconst eshark-frame-hex-buffer-name "*Frame hex*")
+(defconst eshark-reassembled-hex-buffer-name "*Reassambled hex*")
+(defvar eshark-hex-buffer nil)
 
 (defun eshark-stop()
   (interactive)
@@ -210,7 +212,7 @@
 		  :name "net packet detail process"
 		  :buffer (current-buffer)
 		  :command (list "sh" "-c" (format "tshark -T pdml -r %s -Y \"frame.number\>=%d and frame.number\<=%d\"" tshark-capture-temp-file (car frame-hole) (cdr frame-hole)))
-		  :coding 'chinese-gb18030-dos
+		  :coding (cons 'utf-8 'chinese-gb18030-dos)
 		  :stdrrr (get-buffer-create "*Packet detail err*")
 		  :sentinel
 		  (lambda(process evt-string)
@@ -292,78 +294,126 @@
   :group 'basic-faces)
 
 (defun eshark-highlight-hex-portion(pos size)
-  (with-current-buffer (get-buffer-create eshark-packet-hex-buffer-name)
+  (with-current-buffer eshark-hex-buffer
 	(save-excursion
-	  (setq buffer-read-only nil)
-	  (set-text-properties (point-min) (point-max) nil)
-	  (let (
-			(line (1+ (/ pos 16)))
-			(col (% pos 16))
-			)
-		(goto-char (point-min))
-		(forward-line (1- line))
-		(forward-char (+ 6 (* 3 col)))
-		(while (> size 0)
-		  (let* (
-				 (hex-cnt (if (> (+ col size) 16) (- 16 col) size))
-				 )
-			(set-text-properties (point) (+ (point) (+ 2 (* 3 (1- hex-cnt)))) '(face eshark-cur-hex-face))
-			(cl-decf size hex-cnt)
-			(when (> size 0)
-			  (forward-line)
-			  (forward-char 6))
-			(setq col 0)
-			)
+	(setq buffer-read-only nil)
+	(set-text-properties (point-min) (point-max) nil)
+	(let (
+		  (line (1+ (/ pos 16)))
+		  (col (% pos 16))
+		  hl-pos
+		  )
+	  (goto-char (point-min))
+	  (forward-line (1- line))
+	  (forward-char (+ 6 (* 3 col)))
+	  (setq hl-pos (pos-bol))
+	  
+	  (while (> size 0)
+		(let* (
+			   (hex-cnt (if (> (+ col size) 16) (- 16 col) size))
+			   )
+		  (set-text-properties (point) (+ (point) (+ 2 (* 3 (1- hex-cnt)))) '(face eshark-cur-hex-face))
+		  (cl-decf size hex-cnt)
+		  (when (> size 0)
+			(forward-line)
+			(forward-char 6))
+		  (setq col 0)
 		  )
 		)
 	  (setq buffer-read-only t)
+	  (if (null (pos-visible-in-window-p hl-pos (get-buffer-window) 'partially))
+		  (set-window-start (get-buffer-window) hl-pos nil)
+		)
 	  )
 	)
+	)
   )
-(defun eshark-view-pkt-hex(frame-number)
+(defvar eshark-hex-buffer-str "")
+(defun eshark-view-pkt-hex(frame-number frames-only &optional highlight-pos highlight-size)
   (let (
 		(cur-buffer (current-buffer))
 		)
-	  (with-current-buffer (get-buffer-create eshark-packet-hex-buffer-name)
-		(make-process
-		 :name "net packet hexdump process"
-		 :buffer (current-buffer)
-		 :command (list "sh" "-c" (format "tshark -r %s --hexdump delimit -Y \"frame.number==%d\"" tshark-capture-temp-file frame-number))
-		 :coding 'chinese-gb18030-dos
-		 :stdrrr (get-buffer-create "*Packet hexdump err*")
-		 :filter
-		 ;; [[**  (bookmark--jump-via "("(elisp) Filter Functions" (front-context-string . "File: elisp.info") (rear-context-string) (position . 3314736) (last-modified 26444 6735 918922 0) (filename . "d:/Software/Editor/Emacs/emacs-29.4/share/info/elisp") (info-node . "Filter Functions") (handler . Info-bookmark-jump) (defaults "(elisp) Filter Functions" "elisp" "Filter Functions" "*info*"))" 'switch-to-buffer-other-window)  **]]
-		 (lambda (proc string)
-		   (when (buffer-live-p (process-buffer proc))
-			 (display-buffer (process-buffer proc))
-			 (with-current-buffer (process-buffer proc)
-			   (setq buffer-read-only nil)
-			   (erase-buffer)
-			   (insert string)
-			   (setq buffer-read-only t)
+	(with-current-buffer (or eshark-hex-buffer (setq eshark-hex-buffer (get-buffer-create eshark-frame-hex-buffer-name)))
+	  (setq buffer-read-only nil)
+	  (setq eshark-hex-buffer-str "")
+	  ;; (erase-buffer)
+	  (make-process
+	   :name "net packet hexdump process"
+	   :buffer nil;;(current-buffer)
+	   :command (list "sh" "-c" (format "tshark -r %s --hexdump delimit --hexdump %s -Y \"frame.number==%d\"" tshark-capture-temp-file (if frames-only "frames" "all") frame-number))
+	   :coding 'chinese-gb18030-dos
+	   :stdrrr (get-buffer-create "*Packet hexdump err*")
+	   :filter
+	   ;; [[**  (bookmark--jump-via "("(elisp) Filter Functions" (front-context-string . "File: elisp.info") (rear-context-string) (position . 3314736) (last-modified 26444 6735 918922 0) (filename . "d:/Software/Editor/Emacs/emacs-29.4/share/info/elisp") (info-node . "Filter Functions") (handler . Info-bookmark-jump) (defaults "(elisp) Filter Functions" "elisp" "Filter Functions" "*info*"))" 'switch-to-buffer-other-window)  **]]
+	   (lambda (proc string)
+		 ;; (when (buffer-live-p (process-buffer proc))
+		 (when (buffer-live-p eshark-hex-buffer)
+		   (display-buffer eshark-hex-buffer)
+		   (with-current-buffer eshark-hex-buffer
+			 ;; (setq buffer-read-only nil)
+			 ;; (erase-buffer)
+			 (if frames-only
+				 ;; (insert string)
+				 (setq eshark-hex-buffer-str (concat eshark-hex-buffer-str string))
+			   (setq eshark-hex-buffer-str (concat eshark-hex-buffer-str string))
+			   (message "hhh")
+			   ;; (insert string)
+			   ;; (insert (progn (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" string) (match-string 1 string)))
 			   )
+			 ;; (setq buffer-read-only t)
 			 )
 		   )
-		 :sentinel
-		 ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
-		 #'ignore
 		 )
-		(unless eshark-auto-switch-to-detail-buffer
-		  (pop-to-buffer cur-buffer)
-		  )
+	   :sentinel
+	   ;; #'zyt-sentinal
+	   ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
+	   ;; #'ignore
+	   (lambda(proc evt-string)
+		 (when (string= evt-string "finished\n")
+		   (message "finished ssss")
+		   ;; (with-current-buffer (process-buffer proc)
+		   (unless frames-only
+			 (setq eshark-hex-buffer-str
+				   (progn
+					 (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" eshark-hex-buffer-str)
+					 (match-string 1 eshark-hex-buffer-str)
+					 ))
+			 )
+		   (with-current-buffer eshark-hex-buffer
+			 (setq buffer-read-only nil)
+			 (erase-buffer)
+			 (insert eshark-hex-buffer-str)
+			 (if (and highlight-pos highlight-size)
+				 (eshark-highlight-hex-portion highlight-pos highlight-size)
+			   )
+			 (setq buffer-read-only t)
+			 (if frames-only
+				 (rename-buffer eshark-frame-hex-buffer-name)
+			   (rename-buffer eshark-reassembled-hex-buffer-name))
+			 ;; (delete-process proc)
+			 )
+		   )
+		 )
+	   )
+	  (unless eshark-auto-switch-to-detail-buffer
+		(pop-to-buffer cur-buffer)
 		)
+	  )
 	)
   )
+
 (defun eshark--get-current-frame-number()
   "Get the frame number of current line, only works in sniffer buffer"
-  (save-excursion
-	(if-let (
-			 (line (thing-at-point 'line))
-			 (match (progn
-					  (string-match eshark--buffer-frame-number-regexp line)
-					  (match-string 1 line)))
-			 )
-		(string-to-number match)
+  (with-current-buffer eshark-buffer-name
+	(save-excursion
+	  (if-let (
+			   (line (thing-at-point 'line))
+			   (match (progn
+						(string-match eshark--buffer-frame-number-regexp line)
+						(match-string 1 line)))
+			   )
+		  (string-to-number match)
+		)
 	  )
 	)
   )
@@ -378,19 +428,24 @@
 		   (proto-list (eshark-get-pdml frame-number tshark-capture-temp-file))
 		   )
 	  (with-current-buffer (get-buffer-create eshark-packet-pdml-buffer-name)
-		(setq buffer-read-only nil)
-		(erase-buffer)
-		(--map
-		 (insert (assemble-proto it))
-		 proto-list)
-		(setq buffer-read-only t)
-		(eshark-detail-minor-mode)
-		(goto-char 1)
-		(eshark-view-pkt-hex frame-number) 
-		(setq sniffer-view-detail-timer-delay nil)
-		(unless eshark-auto-switch-to-detail-buffer
-		  (pop-to-buffer cur-buffer)
-		  )
+		;; (let (
+			  ;; (coding-system-for-write 'chinese-gb18030-dos)
+			  ;; (coding-system-for-read 'utf-8)
+			  ;; )
+		  (setq buffer-read-only nil)
+		  (erase-buffer)
+		  (--map
+		   (insert (assemble-proto it))
+		   proto-list)
+		  (setq buffer-read-only t)
+		  (eshark-detail-minor-mode)
+		  (goto-char 1)
+		  (eshark-view-pkt-hex frame-number 'frames-only) 
+		  (setq sniffer-view-detail-timer-delay nil)
+		  (unless eshark-auto-switch-to-detail-buffer
+			(pop-to-buffer cur-buffer)
+			)
+		  ;; )
 		)
 	(setq eshark-target-frame-number frame-number)
 	;; (message "set eshark-target-frame-number to %d" eshark-target-frame-number)
@@ -519,17 +574,21 @@
 	)
   )
 (defvar eshark-hex-cur-item-properties nil)
+(defconst reassemble-name-list '("tcp.segment" "tcp.segments"))
 (defun eshark-move-in-detail-buffer()
   (interactive)
   (let* (
-		(basic-event (event-basic-type last-input-event))
-		(ch
-		 (if (symbolp basic-event)
-			 (get basic-event 'ascii-character)
-		   basic-event
-		   )
+		 (basic-event (event-basic-type last-input-event))
+		 (name-before-move (get-text-property (point) ' name))
+		 (pos-before-move (get-text-property (point) ' pos))
+		 (size-before-move (get-text-property (point) ' size))
+		 (ch
+		  (if (symbolp basic-event)
+			  (get basic-event 'ascii-character)
+			basic-event
+			)
+		  )
 		 )
-		)
 	(prog1
 		(pcase basic-event
 		  ((or ?j 'down) (next-logical-line nil t))
@@ -537,20 +596,43 @@
 		  ((or ?l 'right) (forward-char))
 		  ((or ?h 'left) (forward-char -1))
 		  )
-	  (if-let (
-			   (item-properties (text-properties-at (point)))
-			   (pos (get-text-property (point) 'pos))
-			   (size (get-text-property (point) 'size))
-			   )
+	  (when-let (
+				 (item-properties (text-properties-at (point)))
+				 (pos (get-text-property (point) 'pos))
+				 (size (get-text-property (point) 'size))
+				 (name (get-text-property (point) ' name))
+				 )
+		(if (or
+			 (xor
+			  (member name reassemble-name-list)
+			  (string= eshark-reassembled-hex-buffer-name (buffer-name eshark-hex-buffer))
+			  )
+			 (xor
+			  (null (member name reassemble-name-list))
+			  (string= eshark-frame-hex-buffer-name (buffer-name eshark-hex-buffer))
+			  )
+			 )
+			 ;; (or 
+			 ;;  ;; (null (string= name-before-move name))
+			 ;;  ;; (null (string= size-before-move size))
+			 ;;  (null (string= pos-before-move pos))
+			 ;;  )
+			;; [[**  (bookmark--jump-via "("tcp.segment demo" (filename . "~/org-roam-files/sh-qerdjfi.xml") (buffer-name . "sh-qerdjfi.xml") (front-context-string . "=\"tcp.segment\" s") (rear-context-string . "     <field name") (front-context-region-string) (rear-context-region-string) (visits . 0) (time 26445 34534 14238 0) (created 26445 34534 14238 0) (position . 31183))" 'switch-to-buffer-other-window)  **]]
+			;; 此种情况会异步刷新hex-buffer，buf内容刷新时间不确定
+			;; 故不能在此处调用eshark-highlight-hex-portion，而要在异步process的sentinal中高亮相应部分
+			(eshark-view-pkt-hex (eshark--get-current-frame-number)
+								 (null (member name reassemble-name-list))
+								 (string-to-number pos) (string-to-number size))         
 		  (if (and
-			   (> (string-to-number size) 0)
-			   (null (equal eshark-hex-cur-item-properties item-properties))
+			   ;; (> (string-to-number size) 0)
+			   ;; (null (equal eshark-hex-cur-item-properties item-properties))
 			   )
 			  (progn
 				;; (message "ch-->%s" ch)
 				(eshark-highlight-hex-portion (string-to-number pos) (string-to-number size))
-			  )
+				)
 			)
+		  )
 		)
 	  )
 	)
@@ -593,10 +675,12 @@
   :keymap zyt/real-time-sniff-detail-mode-map
   (progn
 	(outline-minor-mode -1) ;;Reset to normal-mode to reset `underlying face`to avoid resizing :height/:wight relatively to current value each time when entering eshark-detail-minor-mode.
-	(setq-local outline-regexp "\\(^\\w\\)\\|\\(^ \\{4,64\\}\\)")
-	(face-spec-set 'outline-1 '((t (:extend t :foreground "yellow" :weight bold :height 1.1))))
-	(face-spec-set 'outline-4 '((t (:extend t :foreground "steel blue" :weight bold :height 1))))
-	(face-spec-set 'outline-8 '((t (:extend t :foreground "#e6eeff" :slant italic :weight thin :height 1))))
+	;; (setq-local outline-regexp "\\(^\\w\\)\\|\\(^ \\{4,64\\}\\)")
+	(setq-local outline-regexp "\\(^\\w\\{1,1\\}\\)\\|\\(^\s\\{4,16\\}\\)")
+	;; (face-spec-set 'outline-1 '((t (:extend t :foreground "yellow" :weight bold :height 1.1))))
+	;; (face-spec-set 'outline-4 '((t (:extend t :foreground "steel blue" :weight bold :height 1))))
+	;; (face-spec-set 'outline-8 '((t (:extend t :foreground "red" :slant italic :weight thin :height 1))))
+	;; (face-spec-set 'outline-16 '((t (:extend t :foreground "red" :slant italic :weight thin :height 1))))
 	(setq-local outline-minor-mode-highlight  t)
 	(setq buffer-read-only t)
 	(outline-minor-mode)

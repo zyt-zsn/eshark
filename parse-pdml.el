@@ -22,19 +22,16 @@
   )
 (defun assemble-field (field depth)
   (let (
-	(text "")
+		(text "")
 		children-str-list
 		(tab-cnt depth)
 		)
-	(while (> tab-cnt 0)
-	  ;; (princ "\t")
-	  (setq text (concat text "\t"))
-	  (cl-decf tab-cnt)
-	  )
+	
 	(let (
 		  (showname (dom-attr field 'showname))
 		  (show (dom-attr field 'show))
 		  (name (dom-attr field 'name))
+		  (size (dom-attr field 'size))
 		  )
 	  (setq text (concat text
 						 (if (and showname (null (string= "" showname)))
@@ -43,8 +40,16 @@
 							   show
 							 name))
 						 ))
+	  (if (string= "0" size)
+		  (setq text (concat "[" text "]"))
+		)
+	  (while (> tab-cnt 0)
+		(setq text (concat "\s\s\s\s" text))
+		(cl-decf tab-cnt)
+		)
 	  )
 	(setq text (concat text "\n"))
+	
 	;; [[**  (bookmark--jump-via "("field with children" (filename . "d:/temp/sh-xxxxxx.xml") (front-context-string . "    <field name=") (rear-context-string . "0\" value=\"45\"/>\n") (position . 25006) (last-modified 26443 55670 875035 0) (defaults "sh-xxxxxx.xml"))" 'switch-to-buffer-other-window)  **]]	
 	(set-text-properties 0 (length text)
 						 `(
@@ -80,6 +85,15 @@
 		 (coding-system-for-write 'chinese-gb18030-dos)
 		 )
 	(set-text-properties 0 (length text) '(name "test") text)
+	(set-text-properties 0 (length text)
+						 `(
+						   show ,(dom-attr proto 'show)
+						   value,(dom-attr proto 'value)
+						   size,(dom-attr proto 'size)
+						   pos,(dom-attr proto 'pos)
+						   name ,(dom-attr proto 'name)
+						   ) text)
+
 	(setq text (propertize text 'face `(:foreground ,proto-fg-color) 'mouse-face 'bold-italic))
 	(setq text (concat text "\n"))
 	(setq field-str-list
