@@ -39,5 +39,7 @@ The emacs package for [[https://www.wireshark.org/][wireshark/tshark]], inspired
 ** eshark-max-extract-pdml-cnt
 
 	max pdml record cnt per extraction.
-* Screenshort
+* Screenshot
+	[[file:output-2024-12-04-16-58-12.gif]]	
+
 	
