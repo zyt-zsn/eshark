@@ -4,6 +4,7 @@
 (require 'parse-pdml)
 (require 'pcase)
 (require 'w3m)
+(require 's)
 ;; (pcap-mode-capture-file "d:/Temp/xl.pcapng" (progn (scratch-buffer) (current-buffer)))
 ;; (pcap-mode-capture-file "d:/Temp/xl.pcapng" (find-file "d:/Temp/xl.pcapng"))
 ;; (shell-command
@@ -57,6 +58,7 @@
 (defconst eshark-frame-hex-buffer-name "*Frame hex*")
 (defconst eshark-reassembled-hex-buffer-name "*Reassambled hex*")
 (defvar eshark-hex-buffer nil)
+(defvar eshark-detail-buffer nil)
 
 (defun eshark-stop()
   (interactive)
@@ -168,6 +170,7 @@
 (defconst eshark--buffer-frame-number-regexp "^ *\\([[:digit:]]+\\) [[:digit:]]\\{2\\}:[[:digit:]]\\{2\\}:[[:digit:]]\\{2\\}\.[[:digit:]]\\{6\\}")
 (defvar-local eshark-auto-switch-to-detail-buffer nil)
 (defvar sniffer-view-detail-timer-delay nil)
+(defvar sniffer-view-hex-timer-delay 0.8)
 (defcustom eshark-max-extract-pdml-cnt 50 "Max pdml cnt per extract action")
 (defvar pdml-ht (make-hash-table :test 'equal))
 (defvar cashed-largest-pdml-number 0)
@@ -245,7 +248,9 @@
 	  (with-current-buffer (get-buffer-create " pdml-tmp-buffer")
 		;; (with-temp-buffer
 		(erase-buffer)
-		(message "Start hexdumping %d <--> %d ..." (car frame-hole) (cdr frame-hole))
+		(let ((inhibit-message t))
+		  (message "Start hexdumping %d <--> %d ..." (car frame-hole) (cdr frame-hole))
+		  )
 		(setq
 		 eshark-detail-process
 		 (make-process
@@ -257,8 +262,10 @@
 		  :sentinel
 		  (lambda(process evt-string)
 			(when (string= evt-string "finished\n")
-			  (message "Hexdumping finished")
-			  (message "cashed-largest-pdml-number %d" cashed-largest-pdml-number)
+			  (let ((inhibit-message t))
+				(message "Hexdumping finished")
+				(message "cashed-largest-pdml-number %d" cashed-largest-pdml-number)
+				)
 			  ;; (with-current-buffer " pdml-tmp-buffer"
 			  (with-current-buffer (process-buffer process)
 				(let* (
@@ -269,10 +276,14 @@
 						 (lambda(node) (string= "packet" (dom-tag node)))
 						 ))
 					   )
-				  (message "frame hole<%d-%d>" (car frame-hole) (+ (car frame-hole) (length packet-list)))
+				  (let ((inhibit-message t))
+					(message "frame hole<%d-%d>" (car frame-hole) (+ (car frame-hole) (length packet-list)))
+					)
 				  (if (= (1+ cashed-largest-pdml-number) (car frame-hole))
 					  (setq cashed-largest-pdml-number (+ (car frame-hole) (length packet-list) -1)))
-				  (message "after extraction: cashed-largest-pdml-number %d" cashed-largest-pdml-number)
+				  (let ((inhibit-message t))
+					(message "after extraction: cashed-largest-pdml-number %d" cashed-largest-pdml-number)
+					)
 				  (if (and eshark-target-frame-number
 						   (<= (car frame-hole) eshark-target-frame-number (cdr frame-hole)))
 					  ;; 更新最新请求
@@ -314,12 +325,11 @@
 				  )
 				)
 			  (when update-detail-buffer-request
-				(pop-to-buffer eshark-packet-pdml-buffer-name)
+				(pop-to-buffer eshark-detail-buffer)
 				(unless eshark-auto-switch-to-detail-buffer
 				  (pop-to-buffer eshark-buffer-name)
 				  )
 				)
-
 			  )
 			)
 		  )
@@ -368,14 +378,17 @@
 	)
 	)
   )
-(defvar eshark-hex-buffer-str "")
+;; (defvar eshark-hex-buffer-str "")
+(defvar eshark-pkt-hex-lastest-number nil)
+(defvar zyt-sniffer--vier-pkt-hex-timer (timer-create))
 (defun eshark-view-pkt-hex(frame-number frames-only &optional highlight-pos highlight-size)
+  (setq eshark-pkt-hex-lastest-number frame-number)
   (let (
 		(cur-buffer (current-buffer))
+		(eshark-hex-buffer-str "")
 		)
 	(with-current-buffer (or eshark-hex-buffer (setq eshark-hex-buffer (get-buffer-create eshark-frame-hex-buffer-name)))
 	  (setq buffer-read-only nil)
-	  (setq eshark-hex-buffer-str "")
 	  ;; (erase-buffer)
 	  (make-process
 	   :name "net packet hexdump process"
@@ -396,10 +409,10 @@
 				 ;; (insert string)
 				 (setq eshark-hex-buffer-str (concat eshark-hex-buffer-str string))
 			   (setq eshark-hex-buffer-str (concat eshark-hex-buffer-str string))
-			   (message "hhh")
 			   ;; (insert string)
 			   ;; (insert (progn (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" string) (match-string 1 string)))
 			   )
+			   (message "eshark-hex-buffer-str len->%d" (length eshark-hex-buffer-str))
 			 ;; (setq buffer-read-only t)
 			 )
 		   )
@@ -409,8 +422,14 @@
 	   ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
 	   ;; #'ignore
 	   (lambda(proc evt-string)
-		 (when (string= evt-string "finished\n")
-		   (message "finished ssss")
+		 ;; (if (string= evt-string "finished\n")
+			 ;; (setq zyt-sniffer--vier-pkt-hex-timer nil))
+		 (when (and
+				(= eshark-pkt-hex-lastest-number frame-number)
+				(string= evt-string "finished\n"))
+		   (let ((inhibit-message t))
+			 (message "finished frame-number--->%d" frame-number)
+			 )
 		   ;; (with-current-buffer (process-buffer proc)
 		   (unless frames-only
 			 (setq eshark-hex-buffer-str
@@ -422,16 +441,18 @@
 		   (with-current-buffer eshark-hex-buffer
 			 (setq buffer-read-only nil)
 			 (erase-buffer)
+			 (if (string= "" eshark-hex-buffer-str)
+				 (message "Fatal error")
+			   (message "in sentinal eshark-hex-buffer-str len->%d" (length eshark-hex-buffer-str))
+				 )
 			 (insert eshark-hex-buffer-str)
-			 (setq eshark-hex-buffer-str "")
 			 (if (and highlight-pos highlight-size)
 				 (eshark-highlight-hex-portion highlight-pos highlight-size)
 			   )
 			 (setq buffer-read-only t)
 			 (if frames-only
-				 (rename-buffer eshark-frame-hex-buffer-name)
-			   (rename-buffer eshark-reassembled-hex-buffer-name))
-			 ;; (delete-process proc)
+				 (rename-buffer (concat eshark-frame-hex-buffer-name ":" (number-to-string frame-number)))
+			   (rename-buffer (concat eshark-reassembled-hex-buffer-name  ":" (number-to-string frame-number))))
 			 )
 		   )
 		 )
@@ -443,36 +464,71 @@
 	)
   )
 
-(defun eshark--get-current-frame-number()
-  "Get the frame number of current line, only works in sniffer buffer"
-  (with-current-buffer eshark-buffer-name
-	(save-excursion
-	  (if-let (
-			   (line (thing-at-point 'line))
-			   (match (progn
-						(string-match eshark--buffer-frame-number-regexp line)
-						(match-string 1 line)))
-			   )
-		  (string-to-number match)
-		)
-	  )
+(defun eshark--get-current-frame-number(buffer)
+  "Get the frame number of current line, only works in list and detail buffer"
+  (pcase buffer
+	('list-buffer
+	 (with-current-buffer eshark-buffer-name
+	   (save-excursion
+		 (if-let (
+				  (line (thing-at-point 'line))
+				  (match (progn
+						   (string-match eshark--buffer-frame-number-regexp line)
+						   (match-string 1 line)))
+				  )
+			 (string-to-number match)
+		   0
+		   )
+		 )
+	   ))
+	('detail-buffer
+	 (with-current-buffer eshark-detail-buffer
+	   (let ((cnt 1)
+			 (backward t)
+			 frame-number)
+		 (save-excursion
+		   (while-let (
+					   (line
+						(if (thing-at-point 'line)
+							(substring-no-properties
+							 (thing-at-point 'line)
+							 ))
+						)
+					   (not-quit
+						(progn
+						  (setq frame-number
+								(progn
+								  (string-match frame-number-regexp line)
+								  (match-string 1 line)))
+						  (and 
+						   (or (> (point-max) (point)) backward)
+						   (not (s-starts-with? "Frame" line)))
+						  )
+						)
+					   )
+			 (forward-line (if backward -1 1))
+			 (if (= (point-min) (point))
+				 (setq backward nil))
+			 )
+		   )
+		 (if frame-number (string-to-number frame-number))
+		 )
+	   )
+	 )
+	(_ (error "Unknown buffer %s" buffer))
 	)
   )
+
 (defun eshark-view-pkt-content(&optional switch-to-detail-buffer target-frame-number)
   "Pop out the detail info of frame on cursor; If `SWITCH-TO-DETAIL-BUFFER` is not nil, jump to the detail info buffer "
   (interactive)
-  (message "eshark-view-pkt-content")
   (setq eshark-auto-switch-to-detail-buffer switch-to-detail-buffer)
   (if-let (
 		   (cur-buffer (current-buffer))
-		   (frame-number (or target-frame-number (eshark--get-current-frame-number)))
+		   (frame-number (or target-frame-number (eshark--get-current-frame-number 'list-buffer)))
 		   (proto-list (eshark-get-pdml frame-number tshark-capture-temp-file))
 		   )
-	  (with-current-buffer (get-buffer-create eshark-packet-pdml-buffer-name)
-		;; (let (
-			  ;; (coding-system-for-write 'chinese-gb18030-dos)
-			  ;; (coding-system-for-read 'utf-8)
-			  ;; )
+	  (with-current-buffer (setq eshark-detail-buffer (get-buffer-create eshark-packet-pdml-buffer-name))
 		  (setq buffer-read-only nil)
 		  (erase-buffer)
 		  (--map
@@ -481,15 +537,20 @@
 		  (setq buffer-read-only t)
 		  (eshark-detail-minor-mode)
 		  (goto-char 1)
-		  (eshark-view-pkt-hex frame-number 'frames-only) 
-		  (setq sniffer-view-detail-timer-delay nil)
+		  (progn
+			(cancel-timer zyt-sniffer--vier-pkt-hex-timer)
+			(setq zyt-sniffer--vier-pkt-hex-timer
+				  (run-at-time sniffer-view-hex-timer-delay nil
+							   #'eshark-view-pkt-hex
+							   frame-number
+							   'frames-only
+							   ))
+			)
 		  (unless eshark-auto-switch-to-detail-buffer
 			(pop-to-buffer cur-buffer)
 			)
-		  ;; )
 		)
 	(setq eshark-target-frame-number frame-number)
-	;; (message "set eshark-target-frame-number to %d" eshark-target-frame-number)
 	(eshark--retrive-pdml-bg frame-number 'update-detail-buffer-request)
 	(setq sniffer-view-detail-timer-delay 0.2)
 	)
@@ -499,24 +560,21 @@
   (interactive)
   (or arg (setq arg 1))
   (let (
-		(cur-frame-number (eshark-nearby-frame-number))
+		(cur-frame-number (eshark--get-current-frame-number 'detail-buffer))
+		(cur-line (line-number-at-pos))
+		(cur-buffer (current-buffer))
 		)
 	(when (> (+ cur-frame-number arg) 0)
 	  (eshark-view-pkt-content nil (+ cur-frame-number arg))
+	  (goto-line cur-line)
 	  (when (and eshark--follow-mode (get-buffer-window eshark-buffer-name))
-		(let ((cur-buffer (current-buffer)))
+		(let (
+			  (sniffer-buffer-frame-number (eshark--get-current-frame-number 'list-buffer))
+			  )
 		  (pop-to-buffer eshark-buffer-name)
-		  (if-let* (
-					  (line (thing-at-point 'line))
-					  (match (and
-							   (string-match eshark--buffer-frame-number-regexp line)
-							   (match-string 1 line)))
-					  )
-			(setq sniffer-buffer-frame-number (string-to-number match))
-			(goto-line 1)
-			(setq sniffer-buffer-frame-number 0)
+		  (let (eshark--follow-mode)
+			(next-line (- cur-frame-number sniffer-buffer-frame-number (- arg)))
 			)
-		  (next-line (- cur-frame-number sniffer-buffer-frame-number (- arg)))
 		  (hl-line-mode)
 		  (pop-to-buffer cur-buffer)
 		  )
@@ -646,11 +704,11 @@
 		(if (or
 			 (xor
 			  (member name reassemble-name-list)
-			  (string= eshark-reassembled-hex-buffer-name (buffer-name eshark-hex-buffer))
+			  (s-prefix-p eshark-reassembled-hex-buffer-name (buffer-name eshark-hex-buffer))
 			  )
 			 (xor
 			  (null (member name reassemble-name-list))
-			  (string= eshark-frame-hex-buffer-name (buffer-name eshark-hex-buffer))
+			  (s-prefix-p eshark-frame-hex-buffer-name (buffer-name eshark-hex-buffer))
 			  )
 			 )
 			 ;; (or 
@@ -661,7 +719,7 @@
 			;; [[**  (bookmark--jump-via "("tcp.segment demo" (filename . "~/org-roam-files/sh-qerdjfi.xml") (buffer-name . "sh-qerdjfi.xml") (front-context-string . "=\"tcp.segment\" s") (rear-context-string . "     <field name") (front-context-region-string) (rear-context-region-string) (visits . 0) (time 26445 34534 14238 0) (created 26445 34534 14238 0) (position . 31183))" 'switch-to-buffer-other-window)  **]]
 			;; 此种情况会异步刷新hex-buffer，buf内容刷新时间不确定
 			;; 故不能在此处调用eshark-highlight-hex-portion，而要在异步process的sentinal中高亮相应部分
-			(eshark-view-pkt-hex (eshark--get-current-frame-number)
+			(eshark-view-pkt-hex (eshark--get-current-frame-number 'list-buffer)
 								 (null (member name reassemble-name-list))
 								 (string-to-number pos) (string-to-number size))         
 		  (if (and
@@ -682,8 +740,8 @@
   (let ((map (make-sparse-keymap)))
 	(keymap-set map "q" #'eshark-view-pkt-content-quit)
 	(keymap-set map "<tab>" #'outline-cycle)
-	(keymap-set map "C-n" (lambda()(interactive)(eshark--detail-mode-next-frame 1)))
-	(keymap-set map "C-p" (lambda()(interactive)(eshark--detail-mode-next-frame -1)))
+	(keymap-set map "C-j" (lambda()(interactive)(eshark--detail-mode-next-frame 1)))
+	(keymap-set map "C-k" (lambda()(interactive)(eshark--detail-mode-next-frame -1)))
 	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
 	(keymap-set map "<backtab>" #'outline-cycle-buffer)
 	(keymap-set map "f" (lambda()(interactive)
@@ -813,41 +871,12 @@
 ;; (shell-quote-argument  "-r d:/Temp/filtertest.pcapng frame contains \"ytzhang\"" )
 
 (defconst frame-number-regexp "Frame \\([[:digit:]]+\\):")
-(defun eshark-nearby-frame-number()
-  (let ((cnt 1)
-		(backward t)
-		frame-number)
-	(while-let (
-				(line
-				 (if (thing-at-point 'line)
-					 (substring-no-properties
-					  (thing-at-point 'line)
-					  ))
-				 )
-				(not-quit
-				 (progn
-				   (setq frame-number
-						 (progn
-						   (string-match frame-number-regexp line)
-						   (match-string 1 line)))
-				   (and 
-					(or (> (point-max) (point)) backward)
-					(not (s-starts-with? "Frame" line)))
-				   )
-				 )
-				)
-	  (forward-line (if backward -1 1))
-	  (if (= (point-min) (point))
-		  (setq backward nil))
-	  )
-	(if frame-number (string-to-number frame-number))
-	)
-  )
+
 (defun eshark-find-frame(frame-number)
   (let (found)
 	(save-excursion
 	  (let ((current-frame-number
-			 (eshark-nearby-frame-number))
+			 (eshark--get-current-frame-number 'detail-buffer))
 			(target-frame-number-regexp
 			 (format "Frame %d:" frame-number))
 			)
