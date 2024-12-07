@@ -700,6 +700,8 @@
 				 (pos (get-text-property (point) 'pos))
 				 (size (get-text-property (point) 'size))
 				 (name (get-text-property (point) ' name))
+				 ;; check whether hex buffer is currently displayed is any window
+				 (_ (get-buffer-window eshark-hex-buffer))
 				 )
 		(if (or
 			 (xor
@@ -711,26 +713,13 @@
 			  (s-prefix-p eshark-frame-hex-buffer-name (buffer-name eshark-hex-buffer))
 			  )
 			 )
-			 ;; (or 
-			 ;;  ;; (null (string= name-before-move name))
-			 ;;  ;; (null (string= size-before-move size))
-			 ;;  (null (string= pos-before-move pos))
-			 ;;  )
 			;; [[**  (bookmark--jump-via "("tcp.segment demo" (filename . "~/org-roam-files/sh-qerdjfi.xml") (buffer-name . "sh-qerdjfi.xml") (front-context-string . "=\"tcp.segment\" s") (rear-context-string . "     <field name") (front-context-region-string) (rear-context-region-string) (visits . 0) (time 26445 34534 14238 0) (created 26445 34534 14238 0) (position . 31183))" 'switch-to-buffer-other-window)  **]]
 			;; 此种情况会异步刷新hex-buffer，buf内容刷新时间不确定
 			;; 故不能在此处调用eshark-highlight-hex-portion，而要在异步process的sentinal中高亮相应部分
 			(eshark-view-pkt-hex (eshark--get-current-frame-number 'list-buffer)
 								 (null (member name reassemble-name-list))
 								 (string-to-number pos) (string-to-number size))         
-		  (if (and
-			   ;; (> (string-to-number size) 0)
-			   ;; (null (equal eshark-hex-cur-item-properties item-properties))
-			   )
-			  (progn
-				;; (message "ch-->%s" ch)
-				(eshark-highlight-hex-portion (string-to-number pos) (string-to-number size))
-				)
-			)
+		  (eshark-highlight-hex-portion (string-to-number pos) (string-to-number size))
 		  )
 		)
 	  )
