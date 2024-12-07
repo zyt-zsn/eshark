@@ -441,10 +441,6 @@
 		   (with-current-buffer eshark-hex-buffer
 			 (setq buffer-read-only nil)
 			 (erase-buffer)
-			 (if (string= "" eshark-hex-buffer-str)
-				 (message "Fatal error")
-			   (message "in sentinal eshark-hex-buffer-str len->%d" (length eshark-hex-buffer-str))
-				 )
 			 (insert eshark-hex-buffer-str)
 			 (if (and highlight-pos highlight-size)
 				 (eshark-highlight-hex-portion highlight-pos highlight-size)
