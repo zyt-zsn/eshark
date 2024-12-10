@@ -5,6 +5,8 @@
 (require 'pcase)
 (require 'w3m)
 (require 's)
+(require 'yaml)
+(require 'cl-macs)
 ;; (pcap-mode-capture-file "d:/Temp/xl.pcapng" (progn (scratch-buffer) (current-buffer)))
 ;; (pcap-mode-capture-file "d:/Temp/xl.pcapng" (find-file "d:/Temp/xl.pcapng"))
 ;; (shell-command
@@ -49,6 +51,13 @@
   #'set-filter
   )
 
+(defcustom eshark-follow-peer0-color
+  "cyan" 
+  "Color for the first node")
+(defcustom eshark-follow-peer1-color
+  "green" 
+  "Color for the second node")
+
 (defcustom eshark-buffer-name "zyt net sniffer" "Sniffer buffer of network packets")
 (defvar zyt/real-time-sniffing nil)
 (defvar eshark-process nil)
@@ -56,9 +65,14 @@
 (defconst eshark-detail-buffer-name "*Packet detail info*")
 (defconst eshark-packet-pdml-buffer-name "*Packet pdml*")
 (defconst eshark-frame-hex-buffer-name "*Frame hex*")
+(defconst eshark-follow-yaml-buffer-name "*eshark yaml output*")
+(defconst eshark-follow-ascii-buffer-name "*eshark follow output*")
 (defconst eshark-reassembled-hex-buffer-name "*Reassambled hex*")
 (defvar eshark-hex-buffer nil)
 (defvar eshark-detail-buffer nil)
+(defvar eshark-follow-yaml-buffer nil)
+(defvar eshark-follow-yaml nil)
+(defvar eshark-follow-ascii-buffer nil)
 
 (defun eshark-stop()
   (interactive)
@@ -73,45 +87,64 @@
 		)
 	)
   )
-
+(defvar eshark-intfs nil)
 (defun eshark-select-intface()
   (let* (
 		 (intfs-output
 		  (with-temp-buffer
 			(let ((coding-system-for-read 'utf-8))
 			  (shell-command "tshark -D" (current-buffer))
-			)
+			  )
 			(buffer-substring-no-properties (point-min) (point-max))
 			)
 		  )
 		 (option-list
-		  (--keep
-		   (progn
-			 (string-match "[[:digit:]]+\.\s\\(.*\\)\s(\\(.*\\))" it)
-			 (cons (match-string 2 it) (match-string 1 it))
-			 )
-		   (split-string intfs-output "\n" 'omit-null)
-		   )
-		  )
+		  (or eshark-intfs
+		  (setq eshark-intfs
+				(--keep
+				 (progn
+				   (string-match "[[:digit:]]+\.\s\\(.*\\)\s(\\(.*\\))" it)
+				   (cons (match-string 2 it) (match-string 1 it))
+				   )
+				 (split-string intfs-output "\n" 'omit-null)
+				 )
+				)
+		  ))
 		 )
-	(regexp-quote
-	 (alist-get
-	  (completing-read
-	   "Interface to capture: "
-	   option-list
-	   (lambda(arg)
-		 t
-		 )
-	   nil
-	   nil
-	   t
-	   )
-	  option-list
-	  nil
-	  nil
-	  'string=
+	(push (cons "本地文件" "infile") option-list)
+	;; (push (cons
+	;; 	   "本地文件"
+	;; 	   ;; "infile"
+	;; 	   (lambda()
+	;; 		 (read-file-name "test:" "~/")
+	;; 		 )
+	;; 	   )
+	;; 	  option-list)
+	(let* (
+		  (selection (alist-get
+					  (completing-read
+					   "Interface to capture: "
+					   option-list
+					   (lambda(arg)
+						 t
+						 )
+					   nil
+					   nil
+					   t
+					   )
+					  option-list
+					  nil
+					  nil
+					  'string=
+					  )))
+	  (if (string= "infile" selection)
+		  (read-file-name "pcapng文件:" )
+		  ;; (read-file-name "test:" nil nil t nil (lambda(filename)
+		  ;; 										  (string= "pcapng" (file-name-extension filename))
+		  ;; 										  ))
+		(regexp-quote selection)
+		)
 	  )
-	 )
 	)
   )
 ;;;###autoload
@@ -119,7 +152,10 @@
   (interactive)
   (if zyt/real-time-sniffing
 	  (eshark-stop)
-	(let ((cle current-language-environment))
+	(let (
+		  (cle current-language-environment)
+		  (data-src (eshark-select-intface))
+		  )
 	  (condition-case err
 		  (progn
 			(with-current-buffer (get-buffer-create eshark-buffer-name)
@@ -139,7 +175,10 @@
 					   :buffer eshark-buffer-name
 					   :coding 'utf-8
 					   :command
-					   (list "sh" "-c" (format "tshark -i %s -l -P -w %s" (eshark-select-intface) tshark-capture-temp-file))
+					   (if (file-exists-p data-src)
+						   (list "sh" "-c" (format "tshark -l -P -r %s" tshark-capture-temp-file))
+						 (list "sh" "-c" (format "tshark -i %s -l -P -w %s" data-src tshark-capture-temp-file))
+						 )
 					   ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
 					   ;; :filter #'eshark-filter
 					   )
@@ -268,14 +307,15 @@
 				)
 			  ;; (with-current-buffer " pdml-tmp-buffer"
 			  (with-current-buffer (process-buffer process)
-				(let* (
+				(let* ((dom (libxml-parse-html-region))
 					   (packet-list
 						;; [[**  (bookmark--jump-via "("pdml file demo" (filename . "d:/temp/sh-xxxxxx.xml") (front-context-string . "<?xml version=\"1") (rear-context-string) (position . 1) (last-modified 26443 53671 294757 0) (defaults "sh-xxxxxx.xml"))" 'switch-to-buffer-other-window)  **]]
 						(dom-search
-						 (libxml-parse-html-region)
+						 dom
 						 (lambda(node) (string= "packet" (dom-tag node)))
 						 ))
 					   )
+				  ;; (puthash 'dom dom pdml-ht)
 				  (let ((inhibit-message t))
 					(message "frame hole<%d-%d>" (car frame-hole) (+ (car frame-hole) (length packet-list)))
 					)
@@ -477,6 +517,11 @@
 		   )
 		 )
 	   ))
+	('follow-buffer
+	 (with-current-buffer eshark-follow-ascii-buffer
+	   (get-text-property (point) 'packet-num)
+	   )
+	 )
 	('detail-buffer
 	 (with-current-buffer eshark-detail-buffer
 	   (let ((cnt 1)
@@ -514,7 +559,127 @@
 	(_ (error "Unknown buffer %s" buffer))
 	)
   )
+(defun eshark--follow-stream(prot filter)
+  ;; [[**  (bookmark--jump-via "("tshark flow" (front-context-string . "-z follow,prot,m") (rear-context-string . "all TCP frames\n\n") (position . 55276) (last-modified 26454 31767 142125 0) (location . "https://www.wireshark.org/docs/man-pages/tshark.html") (handler . eww-bookmark-jump) (defaults "tshark(1)" "*eww*"))" 'switch-to-buffer-other-window)  **]]
+  ;; [[**  (bookmark--jump-via "("tshark(1)" (front-context-string . "-z follow,prot,m") (rear-context-string . " TCP frames\n   \n") (position . 62919) (last-modified 26454 43616 524510 0) (filename . "https://www.wireshark.org/docs/man-pages/tshark.html") (url . "https://www.wireshark.org/docs/man-pages/tshark.html") (handler . bookmark-w3m-bookmark-jump) (defaults "tshark(1)" "*w3m*"))" 'switch-to-buffer-other-window)  **]]
+  (let (
+		(cur-buffer (current-buffer))
+		)
+	(with-current-buffer (or eshark-follow-yaml-buffer (setq eshark-follow-yaml-buffer (get-buffer-create eshark-follow-yaml-buffer-name)))
+	  (setq buffer-read-only nil)
+	  (erase-buffer)
+	  (hide-ctrl-M)
+	  ;; (yaml-mode)
+	  (setq buffer-file-coding-system 'utf-8-dos)
+	  (make-process
+	   :name "eshark yaml process"
+	   :buffer (current-buffer)
+	   :command (list "sh" "-c" (format "tshark -r %s -q -z \"follow,%s,yaml,%s\"" tshark-capture-temp-file prot filter))
+	   :coding (cons 'utf-8-dos 'utf-8-unix)
+	   ;; :coding (cons 'binary 'binary)
+	   :stdrrr (get-buffer-create "*eshark yaml err*")
+	   :sentinel
+	   ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
+	   ;; #'ignore
+	   (lambda(proc evt-string)
+		 (when (string= evt-string "finished\n")
+		   (with-current-buffer (process-buffer proc)
+			 (let ((max-lisp-eval-depth 50000))
+			   (setq eshark-follow-yaml (yaml-parse-string (buffer-string)))
+			   )
+			 )
+		   (with-current-buffer (or eshark-follow-ascii-buffer (setq eshark-follow-ascii-buffer (get-buffer-create eshark-follow-ascii-buffer-name)))
+			 (when-let* (
+						 (packets  (gethash 'packets eshark-follow-yaml))
+						 (_null-check (null (eq packets :null)))
+						 )
+			   (erase-buffer)
+			   (hide-ctrl-M)
+			   ;; (--map-indexed
+				(--map
+				(let* (
+					   (packet (gethash 'packet it))
+					   (peer (gethash 'peer it))
+					   (peer-color (nth peer (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
+					   ;; (peer-color (nth (logand it-index 1) (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
+					   (timestamp (gethash 'timestamp it))
+					   (data (gethash 'data it))
+					   (pos-s (point))
+					   (packet-stream (format "%s\n" (base64-decode-string data)))
+					   )
+				  (set-text-properties 0 (length packet-stream)
+									   `(
+										 ;; invisible t
+										 packet-num ,packet
+										 timestamp ,timestamp
+										 pos-s ,pos-s
+										 face (:foreground ,peer-color)
+										 )
+									   packet-stream
+									   )
+				  (insert packet-stream)
+				  (add-text-properties pos-s (point) `(pos-e ,(1- (point))))
+				  )
+				;; (seq-into packets 'list)
+				packets
+				)
+			   (eshark-follow-minor-mode)
+			   nil
+			   )
+			 )
+		   )
+		 )
+	   )
+	  )
+	(pop-to-buffer cur-buffer)
+	)
+  )
+(defun eshark-follow-stream()
+  (interactive)
+  (with-current-buffer eshark-detail-buffer
+	(when-let* (
+				(stream-options
+				 (--keep
+				  (if-let* (
+							(stream-index (plist-get (text-properties-at (point)) (intern (concat it "-stream-index"))))
+							)
+					  (cons it stream-index)
+					)
+				  stream-list
+				  )
+				 )
+				(stream (completing-read "Follow " stream-options))
+				)
+	  (eshark--follow-stream stream (alist-get stream stream-options nil nil #'string=))
+	  )
+	)
+  ;; (eshark--follow-stream "http" 18)
+  )
 
+(defun eshark-move-in-follow-buffer()
+  (interactive)
+  (let* (
+		 (basic-event (event-basic-type last-input-event))
+		 (name-before-move (get-text-property (point) 'name))
+		 (pos-before-move (get-text-property (point) 'pos))
+		 (size-before-move (get-text-property (point) 'size))
+		 (ch
+		  (if (symbolp basic-event)
+			  (get basic-event 'ascii-character)
+			basic-event
+			)
+		  )
+		 )
+	(prog1
+		(pcase basic-event
+		  ((or ?j 'down) (next-logical-line nil t))
+		  ((or ?k 'up) (previous-logical-line nil t))
+		  ((or ?l 'right) (forward-char))
+		  ((or ?h 'left) (forward-char -1))
+		  )
+	  )
+	)
+  )
 (defun eshark-view-pkt-content(&optional switch-to-detail-buffer target-frame-number)
   "Pop out the detail info of frame on cursor; If `SWITCH-TO-DETAIL-BUFFER` is not nil, jump to the detail info buffer "
   (interactive)
@@ -524,12 +689,14 @@
 		   (frame-number (or target-frame-number (eshark--get-current-frame-number 'list-buffer)))
 		   (proto-list (eshark-get-pdml frame-number tshark-capture-temp-file))
 		   )
-	  (with-current-buffer (setq eshark-detail-buffer (get-buffer-create eshark-packet-pdml-buffer-name))
+	  (with-current-buffer (setq eshark-detail-buffer (or eshark-detail-buffer (get-buffer-create eshark-packet-pdml-buffer-name)))
 		  (setq buffer-read-only nil)
 		  (erase-buffer)
-		  (--map
-		   (insert (assemble-proto it))
-		   proto-list)
+		  ;; (--map
+		  ;;  (insert (assemble-proto it))
+		  ;;  proto-list)
+		  (insert (assemble-proto-list proto-list))
+		  (rename-buffer (format "%s %d" eshark-packet-pdml-buffer-name frame-number))
 		  (setq buffer-read-only t)
 		  (eshark-detail-minor-mode)
 		  (goto-char 1)
@@ -551,8 +718,70 @@
 	(setq sniffer-view-detail-timer-delay 0.2)
 	)
   )
-(defun eshark--detail-mode-next-frame(&optional arg)
-  ;; (interactive "^p\np")
+(defun eshark-follow-mode-next-frame(&optional arg)
+  (interactive)
+  (cl-assert (= 1 (abs arg)) "eshark-follow-mode-next-frame: only `1` or `-1` is accepted")
+  (or arg (setq arg 1))
+  (when-let* (
+			  (_ ;;boundary_check
+			   (null (or
+					  (and (bobp) (< arg 0))
+					  (and (eobp) (> arg 0))
+					  )))
+			  (_ ;;move to proper position
+			   (progn
+				 (while (and
+						 (null (get-text-property (point) 'pos-e))
+						 (progn
+						   (forward-char arg)
+						   (and
+							(null (eobp))
+							(null (bobp))
+							)
+						   )
+						 )
+				   )
+				 (get-text-property (point) 'pos-e)
+				 )
+			   )
+			  (next-frame-pos (with-current-buffer eshark-follow-ascii-buffer
+								(if (= arg 1)
+									(1+ (get-text-property (point) 'pos-e))
+								  (get-text-property (1- (get-text-property (point) 'pos-s)) 'pos-s)
+								  )))
+			  
+			  ;; (cur-line (line-number-at-pos))
+			  (cur-buffer (current-buffer))
+			  )
+	(when (get-buffer-window eshark-follow-ascii-buffer t)
+	  (pop-to-buffer eshark-follow-ascii-buffer)
+	  (goto-char next-frame-pos)
+	  (hl-line-mode)
+	  )
+	(let (
+		  (cur-frame-number (eshark--get-current-frame-number 'follow-buffer))
+		  )
+		;; (eshark-view-pkt-content nil (+ cur-frame-number arg))
+		;; (goto-line cur-line)
+		(when (and eshark--follow-mode (get-buffer-window eshark-buffer-name t))
+		  (let (
+				(sniffer-buffer-frame-number (eshark--get-current-frame-number 'list-buffer))
+				(cur-window (get-buffer-window))
+				)
+			(select-window (get-buffer-window eshark-buffer-name t))
+			;; (pop-to-buffer eshark-buffer-name)
+			(let (eshark--follow-mode)
+			  (next-line (- cur-frame-number sniffer-buffer-frame-number))
+			  )
+			(hl-line-mode)
+			;; (pop-to-buffer cur-buffer)
+			(select-window cur-window)
+			)
+		  )
+	  )
+	)
+  )
+(defun eshark-detail-mode-next-frame(&optional arg)
   (interactive)
   (or arg (setq arg 1))
   (let (
@@ -563,7 +792,7 @@
 	(when (> (+ cur-frame-number arg) 0)
 	  (eshark-view-pkt-content nil (+ cur-frame-number arg))
 	  (goto-line cur-line)
-	  (when (and eshark--follow-mode (get-buffer-window eshark-buffer-name))
+	  (when (and eshark--follow-mode (get-buffer-window eshark-buffer-name t))
 		(let (
 			  (sniffer-buffer-frame-number (eshark--get-current-frame-number 'list-buffer))
 			  )
@@ -674,9 +903,9 @@
   (interactive)
   (let* (
 		 (basic-event (event-basic-type last-input-event))
-		 (name-before-move (get-text-property (point) ' name))
-		 (pos-before-move (get-text-property (point) ' pos))
-		 (size-before-move (get-text-property (point) ' size))
+		 (name-before-move (get-text-property (point) 'name))
+		 (pos-before-move (get-text-property (point) 'pos))
+		 (size-before-move (get-text-property (point) 'size))
 		 (ch
 		  (if (symbolp basic-event)
 			  (get basic-event 'ascii-character)
@@ -695,9 +924,9 @@
 				 (item-properties (text-properties-at (point)))
 				 (pos (get-text-property (point) 'pos))
 				 (size (get-text-property (point) 'size))
-				 (name (get-text-property (point) ' name))
+				 (name (get-text-property (point) 'name))
 				 ;; check whether hex buffer is currently displayed is any window
-				 (_ (get-buffer-window eshark-hex-buffer))
+				 (_ (get-buffer-window eshark-hex-buffer t))
 				 )
 		(if (or
 			 (xor
@@ -721,17 +950,17 @@
 	  )
 	)
   )
-(defvar zyt/real-time-sniff-detail-mode-map
+(defvar eshark-detail-mode-map
   (let ((map (make-sparse-keymap)))
 	(keymap-set map "q" #'eshark-view-pkt-content-quit)
 	(keymap-set map "<tab>" #'outline-cycle)
-	(keymap-set map "C-j" (lambda()(interactive)(eshark--detail-mode-next-frame 1)))
-	(keymap-set map "C-k" (lambda()(interactive)(eshark--detail-mode-next-frame -1)))
-	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
 	(keymap-set map "<backtab>" #'outline-cycle-buffer)
+	(keymap-set map "C-j" (lambda()(interactive)(eshark-detail-mode-next-frame 1)))
+	(keymap-set map "C-k" (lambda()(interactive)(eshark-detail-mode-next-frame -1)))
+	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
+	(keymap-set map "F" #'eshark-follow-stream)
 	(keymap-set map "f" (lambda()(interactive)
-						  ;; (prinl (get-text-property (point) 'name))
-						  (prin1 (text-properties-at (point)))
+						  ;; (prin1 (text-properties-at (point)))
 						  (eshark-select-filter)
 						  (if-let (
 								   (pos (get-text-property (point) 'pos))
@@ -756,7 +985,7 @@
 (define-minor-mode eshark-detail-minor-mode
   "eshark detail content minor mode"
   :lighter " N&D"
-  :keymap zyt/real-time-sniff-detail-mode-map
+  :keymap eshark-detail-mode-map
   (progn
 	(outline-minor-mode -1) ;;Reset to normal-mode to reset `underlying face`to avoid resizing :height/:wight relatively to current value each time when entering eshark-detail-minor-mode.
 	;; (setq-local outline-regexp "\\(^\\w\\)\\|\\(^ \\{4,64\\}\\)")
@@ -772,7 +1001,45 @@
 	;; (outline-hide-sublevels 2)
 	)  
   )
-
+(defvar eshark-follow-mode-map
+  (let ((map (make-sparse-keymap)))
+	;; (keymap-set map "q" #'eshark-view-pkt-content-quit)
+	;; (keymap-set map "<tab>" #'outline-cycle)
+	;; (keymap-set map "<backtab>" #'outline-cycle-buffer)
+	(keymap-set map "C-j" (lambda()(interactive)(eshark-follow-mode-next-frame 1))) (keymap-set map "C-k" (lambda()(interactive)(eshark-follow-mode-next-frame -1)))
+	;; (keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
+	;; (keymap-set map "f" (lambda()(interactive)
+	;; 					  ;; (prinl (get-text-property (point) 'name))
+	;; 					  (prin1 (text-properties-at (point)))
+	;; 					  (eshark-select-filter)
+	;; 					  (if-let (
+	;; 							   (pos (get-text-property (point) 'pos))
+	;; 							   (size (get-text-property (point) 'size))
+	;; 							   )
+	;; 						  (if (> (string-to-number size) 0)
+	;; 						  (eshark-highlight-hex-portion (string-to-number pos) (string-to-number size))
+	;; 						  )
+	;; 						)))
+	(keymap-set map "h" #'eshark-move-in-follow-buffer)
+	(keymap-set map "j" #'eshark-move-in-follow-buffer)
+	(keymap-set map "k" #'eshark-move-in-follow-buffer)
+	(keymap-set map "l" #'eshark-move-in-follow-buffer)
+	(keymap-set map "<left>" #'eshark-move-in-follow-buffer)
+	(keymap-set map "<right>" #'eshark-move-in-follow-buffer)
+	(keymap-set map "<down>" #'eshark-move-in-follow-buffer)
+	(keymap-set map "<up>" #'eshark-move-in-follow-buffer)
+	;; (keymap-set map "C-c f" #'eshark-doc-lookup)
+	map
+	)
+  )
+(define-minor-mode eshark-follow-minor-mode
+  "eshark follow minor mode"
+  :lighter " eF"
+  :keymap eshark-follow-mode-map
+  (progn
+	;; (setq buffer-read-only t)
+	)
+  )
 
 (advice-add
  'eshark-view-pkt-content

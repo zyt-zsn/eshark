@@ -20,6 +20,11 @@
 	   )
 	)
   )
+(defconst stream-list '("eth" "ip" "tcp" "udp" "http"))
+(defvar eth-stream-index nil)
+(defvar ip-stream-index nil)
+(defvar tcp-stream-index nil)
+(defvar udp-stream-index nil)
 (defun assemble-field (field depth)
   (let (
 		(text "")
@@ -27,11 +32,15 @@
 		(tab-cnt depth)
 		)
 	
-	(let (
+	(let* (
 		  (showname (dom-attr field 'showname))
 		  (show (dom-attr field 'show))
 		  (name (dom-attr field 'name))
+		  (proto-name (nth 0 (string-split name "\\.")))
 		  (size (dom-attr field 'size))
+		  )
+	  (if (and name (string-suffix-p "stream" name) (member proto-name stream-list))
+		  (set (intern (concat proto-name "-stream-index")) (string-to-number (dom-attr field 'show)))
 		  )
 	  (setq text (concat text
 						 (if (and showname (null (string= "" showname)))
@@ -75,23 +84,34 @@
 	text
 	)
   )
+(defvar http-prot nil)
 (defun assemble-proto (proto)
 ;; [[**  (bookmark--jump-via "("proto sample" (filename . "d:/temp/sh-xxxxxx.xml") (front-context-string . "  <proto name=\"i") (rear-context-string . "0\"/>\n  </proto>\n") (position . 24664) (last-modified 26443 55593 550900 0) (defaults "sh-xxxxxx.xml"))" 'switch-to-buffer-other-window)  **]]
   (let* (
-		 (text (or (dom-attr proto 'showname) (dom-attr proto 'show) (dom-attr proto 'name)))
-		 field-str-list
+		 (showname (dom-attr proto 'showname))
+		 (show (dom-attr proto 'show))
+		 (name (dom-attr proto 'name))
+		 (text (or showname show name))
+		 (value (dom-attr proto 'value))
+		 (size (dom-attr proto 'size))
+		 (pos (dom-attr proto 'pos))
+
 		 (proto-fg-color "yellow")
 		 (field-list (dom-children proto))
 		 (coding-system-for-write 'chinese-gb18030-dos)
+		 field-str-list
 		 )
+	(when (string= name "http")
+	  (setq http-prot t) 
+	  )
 	(set-text-properties 0 (length text) '(name "test") text)
 	(set-text-properties 0 (length text)
 						 `(
-						   show ,(dom-attr proto 'show)
-						   value,(dom-attr proto 'value)
-						   size,(dom-attr proto 'size)
-						   pos,(dom-attr proto 'pos)
-						   name ,(dom-attr proto 'name)
+						   show ,show
+						   value ,value
+						   size ,size
+						   pos ,pos
+						   name ,name
 						   ) text)
 
 	(setq text (propertize text 'face `(:foreground ,proto-fg-color) 'mouse-face 'bold-italic))
@@ -108,7 +128,32 @@
 	text
 	)
   )
-
+(defun assemble-proto-list (proto-list)
+  (let ((ret ""))
+	(--map
+	 (set (intern (concat it "-stream-index")) nil)
+	 stream-list
+	 )
+	(setq http-prot nil)
+	(--map
+	 (progn
+	   (setq ret (concat ret (assemble-proto it)))
+	   )
+	 proto-list)
+	(--map
+	 (when-let (
+				(stream-index
+				(symbol-value (intern (concat it "-stream-index"))))
+				)
+	   (add-text-properties 0 (length ret) (list (intern (concat it "-stream-index")) stream-index) ret)
+	   (when http-prot
+		 (add-text-properties 0 (length ret) (list (intern "http-stream-index") stream-index) ret)
+		 )
+	   )
+	 '("tcp" "udp"))
+	ret
+	)
+  )
 ;; (assemble-proto (nth 1 proto-list))
 
 (defun disp-proto (proto)
