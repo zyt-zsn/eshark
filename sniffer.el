@@ -589,11 +589,12 @@
 			   (setq eshark-follow-yaml (yaml-parse-string (buffer-string)))
 			   )
 			 )
-		   (with-current-buffer (or eshark-follow-ascii-buffer (setq eshark-follow-ascii-buffer (get-buffer-create eshark-follow-ascii-buffer-name)))
+		   (with-current-buffer (setq eshark-follow-ascii-buffer (get-buffer-create eshark-follow-ascii-buffer-name))
 			 (when-let* (
 						 (packets  (gethash 'packets eshark-follow-yaml))
 						 (_null-check (null (eq packets :null)))
 						 )
+			   (read-only-mode -1)
 			   (erase-buffer)
 			   (hide-ctrl-M)
 			   ;; (--map-indexed
@@ -1059,9 +1060,7 @@
   "eshark follow minor mode"
   :lighter " eF"
   :keymap eshark-follow-mode-map
-  (progn
-	;; (setq buffer-read-only t)
-	)
+  (read-only-mode)
   )
 
 (advice-add
