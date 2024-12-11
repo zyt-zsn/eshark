@@ -598,37 +598,59 @@
 			   (erase-buffer)
 			   (hide-ctrl-M)
 			   ;; (--map-indexed
-				(--map
-				(let* (
-					   (packet (gethash 'packet it))
-					   (peer (gethash 'peer it))
-					   (peer-color (nth peer (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
-					   ;; (peer-color (nth (logand it-index 1) (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
-					   (timestamp (gethash 'timestamp it))
-					   (data (gethash 'data it))
-					   (pos-s (point))
-					   (packet-stream (format "%s\n"
-											  (decode-coding-string
-											   (base64-decode-string data)
-											   'utf-8)
-											  ))
-					   )
-				  (set-text-properties 0 (length packet-stream)
-									   `(
-										 ;; invisible t
-										 packet-num ,packet
-										 timestamp ,timestamp
-										 pos-s ,pos-s
-										 face (:foreground ,peer-color)
+			   (let (
+					 (prev-packet-num -1)
+					 ;; multiple yaml packet may belong to same network packet
+					 ;; ref [[**  (bookmark--jump-via "("yaml demo" (filename . "~/org-roam-files/data/3e/50e3f4-6f6e-4cf1-bfb5-d2aa5b381be7/sh-vCwffn.xml") (front-context-string . "peers:\n  - peer:") (rear-context-string) (position . 1) (last-modified 26457 19396 998073 0) (defaults "sh-vCwffn.xml"))" 'switch-to-buffer-other-window)  **]]
+					 (successive-packets-pos-s 1)
+					 )
+				 (--map
+				  (let* (
+						 (packet-num (gethash 'packet it))
+						 (peer (gethash 'peer it))
+						 (peer-color (nth peer (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
+						 ;; (peer-color (nth (logand it-index 1) (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
+						 (timestamp (gethash 'timestamp it))
+						 (data (gethash 'data it))
+						 (pos-s (point))
+						 (packet-stream (format "%s\n"
+												(decode-coding-string
+												 (base64-decode-string data)
+												 'utf-8)
+												))
+						 )
+					(set-text-properties 0 (length packet-stream)
+										 `(
+										   ;; invisible t
+										   packet-num ,packet-num
+										   timestamp ,timestamp
+										   ;; pos-s ,pos-s
+										   face (:foreground ,peer-color)
+										   )
+										 packet-stream
 										 )
-									   packet-stream
-									   )
-				  (insert packet-stream)
-				  (add-text-properties pos-s (point) `(pos-e ,(1- (point))))
+					(unless (= prev-packet-num packet-num)
+					 (add-text-properties successive-packets-pos-s (point)
+										 `(
+										   pos-s ,successive-packets-pos-s
+										   pos-e ,(1- (point))
+										   )) 
+					  )
+					(insert packet-stream)
+					(unless (= prev-packet-num packet-num)
+					  (setq prev-packet-num packet-num)
+					  (setq successive-packets-pos-s pos-s)
+					  (add-text-properties successive-packets-pos-s (point)
+										   `(
+											 pos-s ,successive-packets-pos-s
+											 pos-e ,(1- (point))
+											 ))
+					   )
+					)
+				  ;; (seq-into packets 'list)
+				  packets
 				  )
-				;; (seq-into packets 'list)
-				packets
-				)
+				 )
 			   (eshark-follow-minor-mode)
 			   (message "yaml process finished")
 			   nil
@@ -684,6 +706,7 @@
 		  ((or ?l 'right) (forward-char))
 		  ((or ?h 'left) (forward-char -1))
 		  )
+	  (eshark-follow-stream-set-mode-line)
 	  )
 	)
   )
@@ -791,10 +814,12 @@
 (defun eshark-follow-mode-next-frame()
   (interactive)
   (eshark-follow-mode-jumpto-relative-frame 1)
+  (eshark-follow-stream-set-mode-line)
   )
 (defun eshark-follow-mode-previous-frame()
   (interactive)
   (eshark-follow-mode-jumpto-relative-frame -1)
+  (eshark-follow-stream-set-mode-line)
   )
 
 (defun eshark-detail-mode-jumpto-relative-frame(&optional arg)
@@ -1056,11 +1081,31 @@
 	map
 	)
   )
+(defun eshark-follow-stream-set-mode-line ()
+  ;; [[**  (bookmark--jump-via "("Info-set-mode-line" (filename . "d:/Software/Editor/Emacs/emacs-29.4/share/emacs/29.4/lisp/info.el") (front-context-string . "(setq mode-line-") (rear-context-string . "-mode-line ()\n  ") (position . 66956) (last-modified 26457 8847 172413 0) (defaults "info.el"))" 'switch-to-buffer-other-window)  **]]
+  (setq mode-line-buffer-identification
+		(nconc (propertized-buffer-identification "%b")
+			   (if-let ((packet-num (get-text-property (point) 'packet-num)))
+				   (list
+					(concat " Packet: ")
+					(propertize
+					 (format "<%d>" packet-num)
+					 'help-echo "Current packet number"
+					 'face '(:foreground "yellow")
+					 )
+					)
+				 )
+			   )
+		)
+  )
 (define-minor-mode eshark-follow-minor-mode
   "eshark follow minor mode"
   :lighter " eF"
   :keymap eshark-follow-mode-map
-  (read-only-mode)
+  (progn
+	(read-only-mode)
+	;; (eshark-follow-stream-set-mode-line)
+	)
   )
 
 (advice-add
