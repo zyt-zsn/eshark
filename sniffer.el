@@ -571,6 +571,7 @@
 	  (hide-ctrl-M)
 	  ;; (yaml-mode)
 	  (setq buffer-file-coding-system 'utf-8-dos)
+	  (message "start yaml processing...")
 	  (make-process
 	   :name "eshark yaml process"
 	   :buffer (current-buffer)
@@ -605,7 +606,11 @@
 					   (timestamp (gethash 'timestamp it))
 					   (data (gethash 'data it))
 					   (pos-s (point))
-					   (packet-stream (format "%s\n" (base64-decode-string data)))
+					   (packet-stream (format "%s\n"
+											  (decode-coding-string
+											   (base64-decode-string data)
+											   'utf-8)
+											  ))
 					   )
 				  (set-text-properties 0 (length packet-stream)
 									   `(
@@ -624,6 +629,7 @@
 				packets
 				)
 			   (eshark-follow-minor-mode)
+			   (message "yaml process finished")
 			   nil
 			   )
 			 )
