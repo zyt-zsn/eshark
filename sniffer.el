@@ -724,7 +724,7 @@
 	(setq sniffer-view-detail-timer-delay 0.2)
 	)
   )
-(defun eshark-follow-mode-next-frame(&optional arg)
+(defun eshark-follow-mode-jumpto-relative-frame(&optional arg)
   (interactive)
   (cl-assert (= 1 (abs arg)) "eshark-follow-mode-next-frame: only `1` or `-1` is accepted")
   (or arg (setq arg 1))
@@ -787,7 +787,16 @@
 	  )
 	)
   )
-(defun eshark-detail-mode-next-frame(&optional arg)
+(defun eshark-follow-mode-next-frame()
+  (interactive)
+  (eshark-follow-mode-jumpto-relative-frame 1)
+  )
+(defun eshark-follow-mode-previous-frame()
+  (interactive)
+  (eshark-follow-mode-jumpto-relative-frame -1)
+  )
+
+(defun eshark-detail-mode-jumpto-relative-frame(&optional arg)
   (interactive)
   (or arg (setq arg 1))
   (let (
@@ -813,7 +822,14 @@
 	  )
 	)
   )
-
+(defun eshark-detail-mode-next-frame()
+  (interactive)
+  (eshark-detail-mode-jumpto-relative-frame 1)
+  )
+(defun eshark-detail-mode-previous-frame()
+  (interactive)
+  (eshark-detail-mode-jumpto-relative-frame -1)
+  )
 (defun eshark-toggle-follow-mode()
   "Toggle eshark follow mode"
   (interactive)
@@ -961,8 +977,8 @@
 	(keymap-set map "q" #'eshark-view-pkt-content-quit)
 	(keymap-set map "<tab>" #'outline-cycle)
 	(keymap-set map "<backtab>" #'outline-cycle-buffer)
-	(keymap-set map "C-j" (lambda()(interactive)(eshark-detail-mode-next-frame 1)))
-	(keymap-set map "C-k" (lambda()(interactive)(eshark-detail-mode-next-frame -1)))
+	(keymap-set map "C-j" #'eshark-detail-mode-next-frame)
+	(keymap-set map "C-k" #'eshark-detail-mode-previous-frame)
 	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
 	(keymap-set map "F" #'eshark-follow-stream)
 	(keymap-set map "f" (lambda()(interactive)
@@ -1012,7 +1028,8 @@
 	;; (keymap-set map "q" #'eshark-view-pkt-content-quit)
 	;; (keymap-set map "<tab>" #'outline-cycle)
 	;; (keymap-set map "<backtab>" #'outline-cycle-buffer)
-	(keymap-set map "C-j" (lambda()(interactive)(eshark-follow-mode-next-frame 1))) (keymap-set map "C-k" (lambda()(interactive)(eshark-follow-mode-next-frame -1)))
+	(keymap-set map "C-j" #'eshark-follow-mode-next-frame)
+	(keymap-set map "C-k" #'eshark-follow-mode-previous-frame)
 	;; (keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
 	;; (keymap-set map "f" (lambda()(interactive)
 	;; 					  ;; (prinl (get-text-property (point) 'name))
@@ -1177,6 +1194,34 @@
 	  (goto-char cur-point)
 	  )
 	start
+	)
+  )
+(easy-menu-define eshark-mode-menu (list
+									 zyt/real-time-sniff-mode-map
+									 eshark-detail-mode-map
+									 eshark-follow-mode-map
+									 )
+  "Menu for eshark"
+  '(
+	"Eshark"
+	["Toggle eshark" eshark-toggle
+	 :help "Toggle eshark capture"]
+	["Toggle follow mode" eshark-toggle-follow-mode
+	 :help "Toggle follow mode"]
+	["Follow stream" eshark-follow-stream
+	 :help "Follow stream"]
+	["Move" eshark-move-in-follow-buffer
+	 :help "Move in follow buffer"]
+    "---"
+	["Next stream" eshark-follow-mode-next-frame
+	 :help "Jump to next stream peer"]
+	["Previous stream" eshark-follow-mode-previous-frame
+	 :help "Jump to previous stream peer"]
+    "---"
+	["Next packet frame" eshark-detail-mode-next-frame
+	 :help "Jump to next packet frame"]
+	["Previous stream" eshark-detail-mode-previous-frame
+	 :help "Jump to previous packet frame"]
 	)
   )
 (provide 'eshark)
