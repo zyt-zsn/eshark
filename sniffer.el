@@ -871,6 +871,7 @@
 	("...或不选中" . ||!)
 	("...清除所有" . clear)
 	))
+(defvar eshark-filter-history nil)
 (defun eshark-select-filter()
   ;; eshark-display-filter
   (interactive)
@@ -878,46 +879,59 @@
 			 (cur-buffer (current-buffer))
 			 (name (get-text-property (point) 'name))
 			 (show (get-text-property (point) 'show))
+			 (candiate
+			  (if (string-empty-p name)
+				  (concat "frame contains \\\"" (thing-at-point 'word) "\\\"")
+				(concat name " == " show)
+				)
+			  )
+			 (usr-option (substring-no-properties (completing-read
+												   ;; (format "准备作为过滤器应用 %s %s==%s:" eshark-display-filter name show)
+												   (format "准备作为过滤器应用 %s %s:" eshark-display-filter
+														   (let ()
+															 (set-text-properties 0 (length candiate) '(face eshark-cur-hex-face)
+																				  candiate)
+															 candiate
+															 ))
+												   filter-choice-alist
+												   (lambda(arg)
+													 (if	(or
+															 (null eshark-display-filter)
+															 (string= "" eshark-display-filter))
+														 (member (cdr arg) '(yes !))
+													   t
+													   )
+													 )
+												   nil
+												   nil
+												   '(eshark-filter-history . 1)
+												   candiate
+												   ;; 'equal
+												   )))
 			 (choice
 			  ;; [[**  (bookmark--jump-via "("completing-read demo" (filename . "~/org-roam-files/20241201232505-completing_read_demo.org") (front-context-string . "\n[[https://www.h") (rear-context-string . "eting-read demo\n") (position . 98) (last-modified 26444 32788 786157 0) (defaults "org-capture-last-stored" "20241201232505-completing_read_demo.org"))" 'switch-to-buffer-other-window)  **]] 
-			  (alist-get (completing-read
-						  ;; (format "准备作为过滤器应用 %s %s==%s:" eshark-display-filter name show)
-						  (format "准备作为过滤器应用 %s %s:" eshark-display-filter
-								  (let ((candiate (concat name " == " show)))
-									(set-text-properties 0 (length candiate) '(face eshark-cur-hex-face)
-														 candiate)
-									candiate
-									))
-						  filter-choice-alist
-						  (lambda(arg)
-							(if	(or
-								 (null eshark-display-filter)
-								 (string= "" eshark-display-filter))
-								(member (cdr arg) '(yes !))
-							  t
-							  )
-							)
-						  nil
-						  nil
-						  t
-						  ;; 'equal
-						  )
+			  (alist-get usr-option
 						 filter-choice-alist
-						 nil
+						 usr-option
 						 nil
 						 'string=
 						 ))
 			 )
 	(message "choice-->%s" choice)
-	(custom-set-variables
-	 (list 'eshark-display-filter
-		   (pcase choice
-			 ('clear "")
-			 ('yes (concat "(" name " == " show ")"))
-			 ('! (concat "!(" name " == " show ")"))
-			 (_ (concat eshark-display-filter (if (eq 'yes choice) "" (symbol-name choice)) "(" name " == " show ")"))
-			 )
-		   ))
+	(let ((coding-system-for-write 'chinese-gb18030))
+	  (custom-set-variables
+	   (list 'eshark-display-filter
+			 (pcase choice
+			   ('clear "")
+			   ('yes (concat "(" name " == " show ")"))
+			   ('! (concat "!(" name " == " show ")"))
+			   ((pred (lambda(arg)
+						(stringp arg)
+						)) (concat "(" choice ")"))
+			   (_ (concat eshark-display-filter (if (eq 'yes choice) "" (symbol-name choice)) "(" name " == " show ")"))
+			   )
+			 ))
+	  )
 	)
   )
 (defun eshark-doc-lookup()
