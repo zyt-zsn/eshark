@@ -28,6 +28,7 @@
 ;; (setq my-process (zyt/run-shell-command-and-capture-process "dumpcap -q -i \\\\Device\\\\NPF_{D82798C5-0AD2-4EFE-9112-3FC3A5E41F66} -w -|tee d:/temp/zytxlzsn.pcapng | tshark -r -&" "*Shell Command Output*"))
 
 (defcustom tshark-capture-temp-file "d:/temp/zytxlzsn.pcapng" "Temporary file when capture network packets")
+(defvar eshark-pcap-file nil)
 (defun set-filter(symbol value)
   (let* ((orig-value
 		  (symbol-value symbol)
@@ -176,8 +177,12 @@
 					   :coding 'utf-8
 					   :command
 					   (if (file-exists-p data-src)
-						   (list "sh" "-c" (format "tshark -l -P -r %s" data-src))
-						 (list "sh" "-c" (format "tshark -i %s -l -P -w %s" data-src tshark-capture-temp-file))
+						   (progn
+							 (setq eshark-pcap-file data-src)
+							 (list "sh" "-c" (format "tshark -l -P -r %s" eshark-pcap-file))
+						   )
+						 (setq eshark-pcap-file tshark-capture-temp-file)
+						 (list "sh" "-c" (format "tshark -i %s -l -P -w %s" data-src eshark-pcap-file))
 						 )
 					   ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
 					   ;; :filter #'eshark-filter
@@ -296,7 +301,7 @@
 		 (make-process
 		  :name "net packet detail process"
 		  :buffer (current-buffer)
-		  :command (list "sh" "-c" (format "tshark -T pdml -r %s -Y \"frame.number\>=%d and frame.number\<=%d\"" tshark-capture-temp-file (car frame-hole) (cdr frame-hole)))
+		  :command (list "sh" "-c" (format "tshark -T pdml -r %s -Y \"frame.number\>=%d and frame.number\<=%d\"" eshark-pcap-file (car frame-hole) (cdr frame-hole)))
 		  :coding (cons 'utf-8 'chinese-gb18030-dos)
 		  :stdrrr (get-buffer-create "*Packet detail err*")
 		  :sentinel
@@ -451,7 +456,7 @@
 	  (make-process
 	   :name "net packet hexdump process"
 	   :buffer nil;;(current-buffer)
-	   :command (list "sh" "-c" (format "tshark -r %s --hexdump delimit --hexdump %s -Y \"frame.number==%d\"" tshark-capture-temp-file (if frames-only "frames" "all") frame-number))
+	   :command (list "sh" "-c" (format "tshark -r %s --hexdump delimit --hexdump %s -Y \"frame.number==%d\"" eshark-pcap-file (if frames-only "frames" "all") frame-number))
 	   :coding 'chinese-gb18030-dos
 	   :stdrrr (get-buffer-create "*Packet hexdump err*")
 	   :filter
@@ -594,7 +599,7 @@
 	  (make-process
 	   :name "eshark yaml process"
 	   :buffer (current-buffer)
-	   :command (list "sh" "-c" (format "tshark -r %s -q -z \"follow,%s,yaml,%s\"" tshark-capture-temp-file prot filter))
+	   :command (list "sh" "-c" (format "tshark -r %s -q -z \"follow,%s,yaml,%s\"" eshark-pcap-file prot filter))
 	   :coding (cons 'utf-8-dos 'utf-8-unix)
 	   ;; :coding (cons 'binary 'binary)
 	   :stdrrr (get-buffer-create "*eshark yaml err*")
@@ -736,7 +741,7 @@
   (if-let (
 		   (cur-buffer (current-buffer))
 		   (frame-number (or target-frame-number (eshark--get-current-frame-number 'list-buffer)))
-		   (proto-list (eshark-get-pdml frame-number tshark-capture-temp-file))
+		   (proto-list (eshark-get-pdml frame-number eshark-pcap-file))
 		   )
 	  (with-current-buffer (setq eshark-packet-details-buffer (or eshark-packet-details-buffer (get-buffer-create eshark-packet-pdml-buffer-name)))
 		  (read-only-mode -1)
