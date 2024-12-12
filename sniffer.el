@@ -35,8 +35,8 @@
 	(condition-case var
 		(progn
 		  (set-default symbol value)
-		  (when (buffer-live-p (get-buffer eshark-buffer-name))
-			(with-current-buffer eshark-buffer-name
+		  (when (buffer-live-p (get-buffer eshark-packet-list-buffer-name))
+			(with-current-buffer eshark-packet-list-buffer-name
 			  (pcap-mode-set-tshark-filter value)
 			  ))
 		  )
@@ -58,22 +58,22 @@
   "green" 
   "Color for the second node")
 
-(defcustom eshark-buffer-name "zyt net sniffer" "Sniffer buffer of network packets")
 (defvar zyt/real-time-sniffing nil)
 (defvar eshark-process nil)
 (defvar eshark-detail-process nil)
-(defconst eshark-detail-buffer-name "*Packet detail info*")
+(defconst eshark-packet-list-buffer-name "zyt net sniffer" "Sniffer buffer of network packets")
+(defconst eshark-packet-details-buffer-name "*Packet detail info*")
 (defconst eshark-packet-pdml-buffer-name "*Packet pdml*")
-(defconst eshark-frame-hex-buffer-name "*Frame hex*")
+(defconst eshark-packet-bytes-buffer-name "*Frame hex*")
 (defconst eshark-follow-yaml-buffer-name "*eshark yaml output*")
 (defconst eshark-follow-ascii-buffer-name "*eshark follow output*")
 (defconst eshark-reassembled-hex-buffer-name "*Reassambled hex*")
-(defvar eshark-hex-buffer nil)
-(defvar eshark-detail-buffer nil)
+(defvar eshark-packet-list-buffer nil)
+(defvar eshark-packet-bytes-buffer nil)
+(defvar eshark-packet-details-buffer nil)
 (defvar eshark-follow-yaml-buffer nil)
 (defvar eshark-follow-yaml nil)
 (defvar eshark-follow-ascii-buffer nil)
-
 (defun eshark-stop()
   (interactive)
   (if zyt/real-time-sniffing
@@ -158,8 +158,8 @@
 		  )
 	  (condition-case err
 		  (progn
-			(with-current-buffer (get-buffer-create eshark-buffer-name)
-			  (setq buffer-read-only nil)
+			(with-current-buffer (setq eshark-packet-list-buffer (get-buffer-create eshark-packet-list-buffer-name))
+			  (read-only-mode -1)
 			  (setf buffer-file-name tshark-capture-temp-file)
 			  (progn
 				(if pdml-ht (clrhash pdml-ht))
@@ -172,11 +172,11 @@
 				(setq eshark-process
 					  (make-process
 					   :name "Sniffer process"
-					   :buffer eshark-buffer-name
+					   :buffer eshark-packet-list-buffer-name
 					   :coding 'utf-8
 					   :command
 					   (if (file-exists-p data-src)
-						   (list "sh" "-c" (format "tshark -l -P -r %s" tshark-capture-temp-file))
+						   (list "sh" "-c" (format "tshark -l -P -r %s" data-src))
 						 (list "sh" "-c" (format "tshark -i %s -l -P -w %s" data-src tshark-capture-temp-file))
 						 )
 					   ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
@@ -186,9 +186,10 @@
 				(eshark-reset-detail-buffer)
 				(eshark--retrive-pdml-bg)
 				)
+			  (read-only-mode)
 			  )
 			(setq zyt/real-time-sniffing t)
-			(switch-to-buffer eshark-buffer-name)
+			(switch-to-buffer eshark-packet-list-buffer-name)
 			(setq-local kill-buffer-hook '(t))
 			(add-to-list 'kill-buffer-hook #'eshark-stop)
 			;; Add sleep guarding time due to the asynchronous mode of command:`&
@@ -199,10 +200,10 @@
 	)
   )
 (defun eshark-reset-detail-buffer()
-  (with-current-buffer (get-buffer-create eshark-detail-buffer-name)
-	(setq buffer-read-only nil)
+  (with-current-buffer (get-buffer-create eshark-packet-details-buffer-name)
+	(read-only-mode -1)
 	(erase-buffer)
-	(setq buffer-read-only t)
+	(read-only-mode)
 	)
   )
 (defvar eshark-target-frame-number nil)
@@ -283,7 +284,7 @@
   (unless (process-live-p eshark-detail-process)
 	(message "cashed-largest-pdml-number %d:" cashed-largest-pdml-number)
 	(when-let ((frame-hole (eshark-get-frame-hole frame-number)))
-	  (setq buffer-read-only nil)
+	  (read-only-mode -1)
 	  (with-current-buffer (get-buffer-create " pdml-tmp-buffer")
 		;; (with-temp-buffer
 		(erase-buffer)
@@ -335,12 +336,12 @@
 						 (and update-detail-buffer-request (= frame-number (+ it-index (car frame-hole))))
 					   (eshark-view-pkt-content 'switch-to-detail-buffer frame-number) 
 					   ;; (with-current-buffer eshark-packet-pdml-buffer-name
-					   ;; 	 (setq buffer-read-only nil)
+					   ;; 	 (read-only-mode -1)
 					   ;; 	 (erase-buffer)
 					   ;; 	 (--map
 					   ;; 	  (insert (assemble-proto it))
 					   ;; 	  proto-list)
-					   ;; 	 (setq buffer-read-only t)
+					   ;; 	 (read-only-mode)
 					   ;; 	 )
 					   )
 					 )
@@ -365,9 +366,9 @@
 				  )
 				)
 			  (when update-detail-buffer-request
-				(pop-to-buffer eshark-detail-buffer)
+				(pop-to-buffer eshark-packet-details-buffer)
 				(unless eshark-auto-switch-to-detail-buffer
-				  (pop-to-buffer eshark-buffer-name)
+				  (pop-to-buffer eshark-packet-list-buffer-name)
 				  )
 				)
 			  )
@@ -384,9 +385,9 @@
   :group 'basic-faces)
 
 (defun eshark-highlight-hex-portion(pos size)
-  (with-current-buffer eshark-hex-buffer
+  (with-current-buffer eshark-packet-bytes-buffer
 	(save-excursion
-	(setq buffer-read-only nil)
+	(read-only-mode -1)
 	(set-text-properties (point-min) (point-max) nil)
 	(let (
 		  (line (1+ (/ pos 16)))
@@ -410,7 +411,7 @@
 		  (setq col 0)
 		  )
 		)
-	  (setq buffer-read-only t)
+	  (read-only-mode)
 	  (if (null (pos-visible-in-window-p hl-pos (get-buffer-window) 'partially))
 		  (set-window-start (get-buffer-window) hl-pos nil)
 		)
@@ -418,17 +419,34 @@
 	)
 	)
   )
-;; (defvar eshark-hex-buffer-str "")
+;; (defvar eshark-packet-bytes-buffer-str "")
 (defvar eshark-pkt-hex-lastest-number nil)
 (defvar zyt-sniffer--vier-pkt-hex-timer (timer-create))
+(defvar eshark-bytes-mode-map
+  (let ((map (make-sparse-keymap)))
+	;; (keymap-set map "<backtab>" #'outline-cycle-buffer)
+	(keymap-set map "<tab>" #'eshark-swith-window)
+	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
+	map
+	)
+  )
+(define-minor-mode eshark-bytes-minor-mode
+  "eshark detail content minor mode"
+  :lighter " sB"
+  :keymap eshark-bytes-mode-map
+  (progn
+	(read-only-mode)
+	)  
+  )
+
 (defun eshark-view-pkt-hex(frame-number frames-only &optional highlight-pos highlight-size)
   (setq eshark-pkt-hex-lastest-number frame-number)
   (let (
 		(cur-buffer (current-buffer))
-		(eshark-hex-buffer-str "")
+		(eshark-packet-bytes-buffer-str "")
 		)
-	(with-current-buffer (or eshark-hex-buffer (setq eshark-hex-buffer (get-buffer-create eshark-frame-hex-buffer-name)))
-	  (setq buffer-read-only nil)
+	(with-current-buffer (or eshark-packet-bytes-buffer (setq eshark-packet-bytes-buffer (get-buffer-create eshark-packet-bytes-buffer-name)))
+	  (read-only-mode -1)
 	  ;; (erase-buffer)
 	  (make-process
 	   :name "net packet hexdump process"
@@ -440,20 +458,20 @@
 	   ;; [[**  (bookmark--jump-via "("(elisp) Filter Functions" (front-context-string . "File: elisp.info") (rear-context-string) (position . 3314736) (last-modified 26444 6735 918922 0) (filename . "d:/Software/Editor/Emacs/emacs-29.4/share/info/elisp") (info-node . "Filter Functions") (handler . Info-bookmark-jump) (defaults "(elisp) Filter Functions" "elisp" "Filter Functions" "*info*"))" 'switch-to-buffer-other-window)  **]]
 	   (lambda (proc string)
 		 ;; (when (buffer-live-p (process-buffer proc))
-		 (when (buffer-live-p eshark-hex-buffer)
-		   (display-buffer eshark-hex-buffer)
-		   (with-current-buffer eshark-hex-buffer
-			 ;; (setq buffer-read-only nil)
+		 (when (buffer-live-p eshark-packet-bytes-buffer)
+		   ;; (display-buffer eshark-packet-bytes-buffer)
+		   (with-current-buffer eshark-packet-bytes-buffer
+			 ;; (read-only-mode -1)
 			 ;; (erase-buffer)
 			 (if frames-only
 				 ;; (insert string)
-				 (setq eshark-hex-buffer-str (concat eshark-hex-buffer-str string))
-			   (setq eshark-hex-buffer-str (concat eshark-hex-buffer-str string))
+				 (setq eshark-packet-bytes-buffer-str (concat eshark-packet-bytes-buffer-str string))
+			   (setq eshark-packet-bytes-buffer-str (concat eshark-packet-bytes-buffer-str string))
 			   ;; (insert string)
 			   ;; (insert (progn (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" string) (match-string 1 string)))
 			   )
-			   (message "eshark-hex-buffer-str len->%d" (length eshark-hex-buffer-str))
-			 ;; (setq buffer-read-only t)
+			   (message "eshark-packet-bytes-buffer-str len->%d" (length eshark-packet-bytes-buffer-str))
+			 ;; (read-only-mode)
 			 )
 		   )
 		 )
@@ -472,22 +490,23 @@
 			 )
 		   ;; (with-current-buffer (process-buffer proc)
 		   (unless frames-only
-			 (setq eshark-hex-buffer-str
+			 (setq eshark-packet-bytes-buffer-str
 				   (progn
-					 (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" eshark-hex-buffer-str)
-					 (match-string 1 eshark-hex-buffer-str)
+					 (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" eshark-packet-bytes-buffer-str)
+					 (match-string 1 eshark-packet-bytes-buffer-str)
 					 ))
 			 )
-		   (with-current-buffer eshark-hex-buffer
-			 (setq buffer-read-only nil)
+		   (with-current-buffer eshark-packet-bytes-buffer
+			 (read-only-mode -1)
 			 (erase-buffer)
-			 (insert eshark-hex-buffer-str)
+			 (insert eshark-packet-bytes-buffer-str)
 			 (if (and highlight-pos highlight-size)
 				 (eshark-highlight-hex-portion highlight-pos highlight-size)
 			   )
-			 (setq buffer-read-only t)
+			 (read-only-mode)
+			 (eshark-bytes-minor-mode)
 			 (if frames-only
-				 (rename-buffer (concat eshark-frame-hex-buffer-name ":" (number-to-string frame-number)))
+				 (rename-buffer (concat eshark-packet-bytes-buffer-name ":" (number-to-string frame-number)))
 			   (rename-buffer (concat eshark-reassembled-hex-buffer-name  ":" (number-to-string frame-number))))
 			 )
 		   )
@@ -504,7 +523,7 @@
   "Get the frame number of current line, only works in list and detail buffer"
   (pcase buffer
 	('list-buffer
-	 (with-current-buffer eshark-buffer-name
+	 (with-current-buffer eshark-packet-list-buffer-name
 	   (save-excursion
 		 (if-let (
 				  (line (thing-at-point 'line))
@@ -523,7 +542,7 @@
 	   )
 	 )
 	('detail-buffer
-	 (with-current-buffer eshark-detail-buffer
+	 (with-current-buffer eshark-packet-details-buffer
 	   (let ((cnt 1)
 			 (backward t)
 			 frame-number)
@@ -566,7 +585,7 @@
 		(cur-buffer (current-buffer))
 		)
 	(with-current-buffer (or eshark-follow-yaml-buffer (setq eshark-follow-yaml-buffer (get-buffer-create eshark-follow-yaml-buffer-name)))
-	  (setq buffer-read-only nil)
+	  (read-only-mode -1)
 	  (erase-buffer)
 	  (hide-ctrl-M)
 	  ;; (yaml-mode)
@@ -665,7 +684,7 @@
   )
 (defun eshark-follow-stream()
   (interactive)
-  (with-current-buffer eshark-detail-buffer
+  (with-current-buffer eshark-packet-details-buffer
 	(when-let* (
 				(stream-options
 				 (--keep
@@ -719,15 +738,15 @@
 		   (frame-number (or target-frame-number (eshark--get-current-frame-number 'list-buffer)))
 		   (proto-list (eshark-get-pdml frame-number tshark-capture-temp-file))
 		   )
-	  (with-current-buffer (setq eshark-detail-buffer (or eshark-detail-buffer (get-buffer-create eshark-packet-pdml-buffer-name)))
-		  (setq buffer-read-only nil)
+	  (with-current-buffer (setq eshark-packet-details-buffer (or eshark-packet-details-buffer (get-buffer-create eshark-packet-pdml-buffer-name)))
+		  (read-only-mode -1)
 		  (erase-buffer)
 		  ;; (--map
 		  ;;  (insert (assemble-proto it))
 		  ;;  proto-list)
 		  (insert (assemble-proto-list proto-list))
 		  (rename-buffer (format "%s %d" eshark-packet-pdml-buffer-name frame-number))
-		  (setq buffer-read-only t)
+		  (read-only-mode)
 		  (eshark-detail-minor-mode)
 		  (goto-char 1)
 		  (progn
@@ -793,13 +812,13 @@
 		  )
 		;; (eshark-view-pkt-content nil (+ cur-frame-number arg))
 		;; (goto-line cur-line)
-		(when (and eshark--follow-mode (get-buffer-window eshark-buffer-name t))
+		(when (and eshark--follow-mode (get-buffer-window eshark-packet-list-buffer-name t))
 		  (let (
 				(sniffer-buffer-frame-number (eshark--get-current-frame-number 'list-buffer))
 				(cur-window (get-buffer-window))
 				)
-			(select-window (get-buffer-window eshark-buffer-name t))
-			;; (pop-to-buffer eshark-buffer-name)
+			(select-window (get-buffer-window eshark-packet-list-buffer-name t))
+			;; (pop-to-buffer eshark-packet-list-buffer-name)
 			(let (eshark--follow-mode)
 			  (next-line (- cur-frame-number sniffer-buffer-frame-number))
 			  )
@@ -833,11 +852,11 @@
 	(when (> (+ cur-frame-number arg) 0)
 	  (eshark-view-pkt-content nil (+ cur-frame-number arg))
 	  (goto-line cur-line)
-	  (when (and eshark--follow-mode (get-buffer-window eshark-buffer-name t))
+	  (when (and eshark--follow-mode (get-buffer-window eshark-packet-list-buffer-name t))
 		(let (
 			  (sniffer-buffer-frame-number (eshark--get-current-frame-number 'list-buffer))
 			  )
-		  (pop-to-buffer eshark-buffer-name)
+		  (pop-to-buffer eshark-packet-list-buffer-name)
 		  (let (eshark--follow-mode)
 			(next-line (- cur-frame-number sniffer-buffer-frame-number (- arg)))
 			)
@@ -988,16 +1007,16 @@
 				 (size (get-text-property (point) 'size))
 				 (name (get-text-property (point) 'name))
 				 ;; check whether hex buffer is currently displayed is any window
-				 (_ (get-buffer-window eshark-hex-buffer t))
+				 (_ (get-buffer-window eshark-packet-bytes-buffer t))
 				 )
 		(if (or
 			 (xor
 			  (member name reassemble-name-list)
-			  (s-prefix-p eshark-reassembled-hex-buffer-name (buffer-name eshark-hex-buffer))
+			  (s-prefix-p eshark-reassembled-hex-buffer-name (buffer-name eshark-packet-bytes-buffer))
 			  )
 			 (xor
 			  (null (member name reassemble-name-list))
-			  (s-prefix-p eshark-frame-hex-buffer-name (buffer-name eshark-hex-buffer))
+			  (s-prefix-p eshark-packet-bytes-buffer-name (buffer-name eshark-packet-bytes-buffer))
 			  )
 			 )
 			;; [[**  (bookmark--jump-via "("tcp.segment demo" (filename . "~/org-roam-files/sh-qerdjfi.xml") (buffer-name . "sh-qerdjfi.xml") (front-context-string . "=\"tcp.segment\" s") (rear-context-string . "     <field name") (front-context-region-string) (rear-context-region-string) (visits . 0) (time 26445 34534 14238 0) (created 26445 34534 14238 0) (position . 31183))" 'switch-to-buffer-other-window)  **]]
@@ -1015,8 +1034,9 @@
 (defvar eshark-detail-mode-map
   (let ((map (make-sparse-keymap)))
 	(keymap-set map "q" #'eshark-view-pkt-content-quit)
-	(keymap-set map "<tab>" #'outline-cycle)
+	;; (keymap-set map "<tab>" #'outline-cycle)
 	(keymap-set map "<backtab>" #'outline-cycle-buffer)
+	(keymap-set map "<tab>" #'eshark-swith-window)
 	(keymap-set map "C-j" #'eshark-detail-mode-next-frame)
 	(keymap-set map "C-k" #'eshark-detail-mode-previous-frame)
 	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
@@ -1029,8 +1049,8 @@
 								   (size (get-text-property (point) 'size))
 								   )
 							  (if (> (string-to-number size) 0)
-							  (eshark-highlight-hex-portion (string-to-number pos) (string-to-number size))
-							  )
+								  (eshark-highlight-hex-portion (string-to-number pos) (string-to-number size))
+								)
 							)))
 	(keymap-set map "h" #'eshark-move-in-detail-buffer)
 	(keymap-set map "j" #'eshark-move-in-detail-buffer)
@@ -1057,7 +1077,7 @@
 	;; (face-spec-set 'outline-8 '((t (:extend t :foreground "red" :slant italic :weight thin :height 1))))
 	;; (face-spec-set 'outline-16 '((t (:extend t :foreground "red" :slant italic :weight thin :height 1))))
 	(setq-local outline-minor-mode-highlight  t)
-	(setq buffer-read-only t)
+	(read-only-mode)
 	(outline-minor-mode)
 	;; (outline-hide-sublevels 1)
 	;; (outline-hide-sublevels 2)
@@ -1091,6 +1111,7 @@
 	(keymap-set map "<right>" #'eshark-move-in-follow-buffer)
 	(keymap-set map "<down>" #'eshark-move-in-follow-buffer)
 	(keymap-set map "<up>" #'eshark-move-in-follow-buffer)
+	(keymap-set map "<tab>" #'eshark-swith-window)
 	;; (keymap-set map "C-c f" #'eshark-doc-lookup)
 	map
 	)
@@ -1164,7 +1185,7 @@
  'eshark-line-move-wrapper
  )
 ;; [[**  (bookmark--jump-via "("Tshark | Display Filters" (front-context-string . "\n\nIntroduction t") (rear-context-string . "od introduction.") (position . 3724) (last-modified 26438 53980 855528 0) (filename . "https://tshark.dev/analyze/packet_hunting/packet_hunting/") (url . "https://tshark.dev/analyze/packet_hunting/packet_hunting/") (handler . bookmark-w3m-bookmark-jump) (defaults "Tshark | Display Filters" "*w3m*"))" 'switch-to-buffer-other-window)  **]]
-(defvar zyt/real-time-sniff-mode-map
+(defvar eshank-list-mode-map
   (let ((map (make-sparse-keymap)))
 	(keymap-set map "<return>"
 				(lambda()
@@ -1174,6 +1195,7 @@
 	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
 	(keymap-set map "s" #'eshark-stop)
 	(keymap-set map "t" #'eshark-toggle)
+	(keymap-set map "<tab>" #'eshark-swith-window)
 	map
 	)
   )
@@ -1182,9 +1204,9 @@
   "Sniff network packets in real time"
   :init-value nil
   :lighter "Sniff"
-  :keymap zyt/real-time-sniff-mode-map
+  :keymap eshank-list-mode-map
   (setq eshark--follow-mode t) 
-  (setq buffer-read-only t)
+  (read-only-mode)
   )
 
 ;; tshark -q -r zytxl.pcapng -z "dests,tree,tcp.port==80"
@@ -1204,7 +1226,23 @@
 ;; (shell-quote-argument  "-r d:/Temp/filtertest.pcapng frame contains \"ytzhang\"" )
 
 (defconst frame-number-regexp "Frame \\([[:digit:]]+\\):")
-
+(defun eshark-swith-window()
+  (interactive)
+  (if-let*
+	  (
+	   (eshark-visible-buffer-list (list eshark-packet-list-buffer eshark-packet-details-buffer eshark-packet-bytes-buffer eshark-follow-ascii-buffer))
+	   (next-buffer
+		(or
+		 (cadr (member (current-buffer) eshark-visible-buffer-list))
+		 (nth 0 eshark-visible-buffer-list))
+		)
+	   )
+	  (if (get-buffer-window next-buffer)
+		  (select-window (get-buffer-window next-buffer))
+		(pop-to-buffer next-buffer)
+		)
+	)
+  )
 (defun eshark-find-frame(frame-number)
   (let (found)
 	(save-excursion
@@ -1255,7 +1293,7 @@
 	)
   )
 (easy-menu-define eshark-mode-menu (list
-									 zyt/real-time-sniff-mode-map
+									 eshank-list-mode-map
 									 eshark-detail-mode-map
 									 eshark-follow-mode-map
 									 )
