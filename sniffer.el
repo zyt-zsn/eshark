@@ -637,7 +637,7 @@
 						 (timestamp (gethash 'timestamp it))
 						 (data (gethash 'data it))
 						 (pos-s (point))
-						 (packet-stream (format "%s\n"
+						 (packet-stream (format "%s"
 												(decode-coding-string
 												 (base64-decode-string data)
 												 'utf-8)
