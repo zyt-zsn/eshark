@@ -812,7 +812,7 @@
 	  (goto-char next-frame-pos)
 	  (hl-line-mode)
 	  )
-	(let (
+	(when-let (
 		  (cur-frame-number (eshark--get-current-frame-number 'follow-buffer))
 		  )
 		;; (eshark-view-pkt-content nil (+ cur-frame-number arg))
