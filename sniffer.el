@@ -161,15 +161,11 @@
 		  (progn
 			(with-current-buffer (setq eshark-packet-list-buffer (get-buffer-create eshark-packet-list-buffer-name))
 			  (read-only-mode -1)
-			  (setf buffer-file-name tshark-capture-temp-file)
 			  (progn
 				(if pdml-ht (clrhash pdml-ht))
 				(setq cashed-largest-pdml-number 0)
 				(erase-buffer)
-				(basic-save-buffer)
-				;; (setq-local zyt/real-time-sniff-minor-mode t)
-				(pcap-mode)
-				(zyt/real-time-sniff-minor-mode)
+				;; (setq-local eshark-list-minor-mode t)
 				(setq eshark-process
 					  (make-process
 					   :name "Sniffer process"
@@ -182,12 +178,23 @@
 							 (list "sh" "-c" (format "tshark -l -P -r %s" eshark-pcap-file))
 						   )
 						 (setq eshark-pcap-file tshark-capture-temp-file)
+						 (basic-save-buffer)
 						 (list "sh" "-c" (format "tshark -i %s -l -P -w %s" data-src eshark-pcap-file))
+						 )
+					   :sentinel
+					   (lambda(process evt-string)
+						 (when (string= evt-string "finished\n")
+						   (with-current-buffer (process-buffer process)
+							 (pcap-mode)
+							 (eshark-list-minor-mode)
+							 )
+						   )
 						 )
 					   ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
 					   ;; :filter #'eshark-filter
 					   )
 					  )
+				(setf buffer-file-name eshark-pcap-file)
 				(eshark-reset-detail-buffer)
 				(eshark--retrive-pdml-bg)
 				)
@@ -524,6 +531,76 @@
 	)
   )
 
+(defun eshark--locate-target-frame(buffer frame-number &optional exactly-match)
+  "Locate to target frame designated by FRAME-NUMBER in BUFFER. If failed to find target frame, return nil when EXACTLY-MATCH is nil, otherwise return the current frame number in BUFFER."
+  (cl-assert (eq buffer 'list-buffer) t "List-buffer only for now")
+  (let ((cur-buffer (current-buffer)))
+	   (pcase buffer
+		 ('list-buffer
+		  ;; (with-current-buffer eshark-packet-list-buffer-name
+		  (pop-to-buffer eshark-packet-list-buffer)
+		  (let* (
+				 (cur-frame-number (eshark--get-current-frame-number buffer))
+				 (cur-pos (point))
+				 (init-dir (if (> frame-number cur-frame-number) 'down 'up))
+				 cur-dir
+				 eshark--follow-mode
+				 found
+				 exit
+				 )
+			(while (and (null found) (null found) (null exit))
+			  (setq cur-frame-number (eshark--get-current-frame-number buffer))
+			  (if (eq cur-frame-number frame-number)
+				  (setq found t)
+				(setq cur-dir (if (> frame-number cur-frame-number) 'down 'up))
+				(if (or
+					 (and (bobp) (eq init-dir 'up))
+					 (and (eobp) (eq init-dir 'down))
+					 (null (eq init-dir cur-dir))
+					 )
+					(setq exit t)
+				  (next-line (if (> frame-number cur-frame-number) 1 -1)) 
+				  )
+				)
+			  )
+			(if found
+				(progn
+				  frame-number
+				  )
+			  (goto-char cur-pos)
+			  (unless exactly-match
+				(eshark--get-current-frame-number buffer)
+				)
+			  )
+			)
+		  ;; )
+		  )
+		 )
+	   (pop-to-buffer cur-buffer)
+	   )
+  )
+(defun eshark--moveto-target-frame(buffer frame-number dir)
+  "Move to target frame designated by FRAME-NUMBER and dir in BUFFER. If failed to find target frame, return nil when EXACTLY-MATCH is nil, otherwise return the current frame number in BUFFER."
+  (cl-assert (eq buffer 'list-buffer) t "List-buffer only for now")
+  (let (
+		(cur-buffer (current-buffer))
+		(target-frame-number (if (eq 'down dir)
+								 (1+ frame-number)
+							   (1- frame-number)))
+		)
+	(when (eshark--locate-target-frame buffer frame-number 'exactly-match)
+	  (pop-to-buffer eshark-packet-list-buffer)
+	  (condition-case err
+		  (next-line (if (eq 'down dir) 1 -1))
+		(error nil;;(message (format "%s" err))
+			   )
+		)
+	  (hl-line-mode)
+	  (pop-to-buffer cur-buffer)
+	  )
+	(eshark--get-current-frame-number buffer)
+	)
+  )
 (defun eshark--get-current-frame-number(buffer)
   "Get the frame number of current line, only works in list and detail buffer"
   (pcase buffer
@@ -637,6 +714,7 @@
 						 (timestamp (gethash 'timestamp it))
 						 (data (gethash 'data it))
 						 (pos-s (point))
+						 ;; 属于不同peer时插入 newline?
 						 (packet-stream (format "%s"
 												(decode-coding-string
 												 (base64-decode-string data)
@@ -824,9 +902,9 @@
 				)
 			(select-window (get-buffer-window eshark-packet-list-buffer-name t))
 			;; (pop-to-buffer eshark-packet-list-buffer-name)
-			(let (eshark--follow-mode)
+			;; (let (eshark--follow-mode)
 			  (next-line (- cur-frame-number sniffer-buffer-frame-number))
-			  )
+			  ;; )
 			(hl-line-mode)
 			;; (pop-to-buffer cur-buffer)
 			(select-window cur-window)
@@ -849,21 +927,27 @@
 (defun eshark-detail-mode-jumpto-relative-frame(&optional arg)
   (interactive)
   (or arg (setq arg 1))
-  (let (
+  (let* (
 		(cur-frame-number (eshark--get-current-frame-number 'detail-buffer))
 		(cur-line (line-number-at-pos))
 		(cur-buffer (current-buffer))
+		(target-frame-number
+		 (if eshark--follow-mode
+			 (eshark--moveto-target-frame 'list-buffer cur-frame-number (if (eq 1 arg) 'down 'up))
+		   (+ arg cur-frame-number)
+		   )
+		 )
 		)
-	(when (> (+ cur-frame-number arg) 0)
-	  (eshark-view-pkt-content nil (+ cur-frame-number arg))
+	(when (> target-frame-number 0)
+	  (eshark-view-pkt-content nil target-frame-number)
 	  (goto-line cur-line)
-	  (when (and eshark--follow-mode (get-buffer-window eshark-packet-list-buffer-name t))
+	  (when nil ;;(and eshark--follow-mode (get-buffer-window eshark-packet-list-buffer-name t))
 		(let (
 			  (sniffer-buffer-frame-number (eshark--get-current-frame-number 'list-buffer))
 			  )
 		  (pop-to-buffer eshark-packet-list-buffer-name)
 		  (let (eshark--follow-mode)
-			(next-line (- cur-frame-number sniffer-buffer-frame-number (- arg)))
+			(next-line (- target-frame-number sniffer-buffer-frame-number))
 			)
 		  (hl-line-mode)
 		  (pop-to-buffer cur-buffer)
@@ -1164,7 +1248,7 @@
   "为 eshark 的follow模式特殊处理"
   (prog1
 	  (apply orig args)
-	(when (and zyt/real-time-sniff-minor-mode eshark--follow-mode)
+	(when (and eshark-list-minor-mode eshark--follow-mode)
 	  (if zyt-sniffer--vier-pkt-details-timer
 		  (cancel-timer zyt-sniffer--vier-pkt-details-timer))
 	  (if sniffer-view-detail-timer-delay
@@ -1205,7 +1289,7 @@
 	)
   )
 
-(define-minor-mode zyt/real-time-sniff-minor-mode
+(define-minor-mode eshark-list-minor-mode
   "Sniff network packets in real time"
   :init-value nil
   :lighter "Sniff"
@@ -1326,3 +1410,4 @@
 	)
   )
 (provide 'eshark)
+;; pcap-mode-toggle-conversation-view
