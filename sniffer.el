@@ -307,7 +307,6 @@
 	  )
 	;; (message "cashed-largest-pdml-number %d:" cashed-largest-pdml-number)
 	(when-let ((frame-hole (eshark-get-frame-hole frame-number)))
-	  (read-only-mode -1)
 	  (with-current-buffer (get-buffer-create " pdml-tmp-buffer")
 		;; (with-temp-buffer
 		(erase-buffer)
