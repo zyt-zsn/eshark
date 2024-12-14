@@ -91,36 +91,25 @@
 (defvar eshark-intfs nil)
 (defun eshark-select-intface()
   (let* (
-		 (intfs-output
-		  (with-temp-buffer
-			(let ((coding-system-for-read 'utf-8))
-			  (shell-command "tshark -D" (current-buffer))
-			  )
-			(buffer-substring-no-properties (point-min) (point-max))
-			)
-		  )
 		 (option-list
 		  (or eshark-intfs
-		  (setq eshark-intfs
-				(--keep
-				 (progn
-				   (string-match "[[:digit:]]+\.\s\\(.*\\)\s(\\(.*\\))" it)
-				   (cons (match-string 2 it) (match-string 1 it))
-				   )
-				 (split-string intfs-output "\n" 'omit-null)
-				 )
-				)
-		  ))
+			  (setq eshark-intfs
+					(--keep
+					 (progn
+					   (string-match "[[:digit:]]+\.\s\\(.*\\)\s(\\(.*\\))" it)
+					   (cons (match-string 2 it) (match-string 1 it))
+					   )
+					 (split-string (with-temp-buffer
+									 (let ((coding-system-for-read 'utf-8))
+									   (shell-command "tshark -D" (current-buffer))
+									   )
+									 (buffer-substring-no-properties (point-min) (point-max))
+									 ) "\n" 'omit-null)
+					 )
+					)
+			  ))
 		 )
 	(push (cons "本地文件" "infile") option-list)
-	;; (push (cons
-	;; 	   "本地文件"
-	;; 	   ;; "infile"
-	;; 	   (lambda()
-	;; 		 (read-file-name "test:" "~/")
-	;; 		 )
-	;; 	   )
-	;; 	  option-list)
 	(let* (
 		  (selection (alist-get
 					  (completing-read
