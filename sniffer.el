@@ -37,9 +37,33 @@
 		(progn
 		  (set-default symbol value)
 		  (when (buffer-live-p (get-buffer eshark-packet-list-buffer))
-			(with-current-buffer eshark-packet-list-buffer
-			  (pcap-mode-set-tshark-filter value)
-			  ))
+			;; (with-current-buffer eshark-packet-list-buffer
+			;;   (setf buffer-file-name eshark-pcap-file)
+			;;   (pcap-mode-set-tshark-filter value)
+			;;   (setf buffer-file-name nil)
+			;;   )
+			(progn
+			  (if (process-live-p eshark-list-process)
+				  (kill-process eshark-list-process)
+				(while (process-live-p eshark-list-process))
+				)
+			  (sleep-for 0.5)
+			  (with-current-buffer eshark-packet-list-buffer
+				(erase-buffer)
+				)
+			  (setq eshark-list-process
+					(make-process
+					 :name "eshark list process"
+					 :buffer eshark-packet-list-buffer
+					 :coding 'utf-8
+					 :command
+					 (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r" "-" )
+					 )
+					)
+			  )
+			(setq feed-pos 1)
+			(feed-tshark)
+			)
 		  )
 	  ((error) (set-default symbol orig-value))
 	  )
@@ -61,15 +85,20 @@
 
 (defvar zyt/real-time-sniffing nil)
 (defvar eshark-process nil)
+(defvar eshark-dump-process nil)
+(defvar eshark-list-process nil)
 (defvar eshark-detail-process nil)
 (defconst eshark-packet-list-buffer-name "*Packet list*" "Sniffer buffer of network packets")
+(defconst eshark-packet-raw-buffer-name " *Packet raw data* " "Raw eshark data buffer of network packets")
 (defconst eshark-packet-details-buffer-name "*Packet detail info*")
+(defconst eshakr-packet-pdml-temp-buffer-name " *pdml-tmp-buffer* ")
 (defconst eshark-packet-pdml-buffer-name "*Packet pdml*")
 (defconst eshark-packet-bytes-buffer-name "*Frame hex*")
 (defconst eshark-follow-yaml-buffer-name "*eshark yaml output*")
 (defconst eshark-follow-ascii-buffer-name "*eshark follow output*")
 (defconst eshark-reassembled-hex-buffer-name "*Reassambled hex*")
 (defvar eshark-packet-list-buffer nil)
+(defvar eshark-packet-raw-buffer nil)
 (defvar eshark-packet-bytes-buffer nil)
 (defvar eshark-packet-details-buffer nil)
 (defvar eshark-follow-yaml-buffer nil)
@@ -79,9 +108,12 @@
   (interactive)
   (if zyt/real-time-sniffing
 	  (progn
-		(if (process-live-p eshark-process)
-			(kill-process eshark-process)
+		(--map
+		(if (process-live-p it)
+			(kill-process it)
 		  )
+		(list eshark-process eshark-dump-process eshark-list-process eshark-detail-process)) 
+		;; (kill-buffer eshark-packet-list-buffer)
 		;; (sleep-for 0 1000)
 		;; (delete-file tshark-capture-temp-file)
 		(setq zyt/real-time-sniffing nil)
@@ -137,6 +169,25 @@
 	  )
 	)
   )
+(defvar feed-pos 1)
+(defun feed-tshark()
+  (when (process-live-p eshark-list-process)
+	  (with-current-buffer
+		  eshark-packet-raw-buffer
+		(let (
+			  ;; (coding-system-for-read 'no-conversion)
+			  ;; (coding-system-for-write 'no-conversion)
+			  (cur-end (point-max))
+			  )
+		  (when (> cur-end feed-pos)
+			(process-send-region eshark-list-process feed-pos cur-end)
+			(setq feed-pos cur-end)
+			)
+		  )
+		)
+	(run-at-time 0.1 nil 'feed-tshark)
+	)
+  )
 ;;;###autoload
 (defun eshark-toggle()
   (interactive)
@@ -146,47 +197,71 @@
 		  (cle current-language-environment)
 		  (data-src (eshark-select-intface))
 		  )
+	  (when (buffer-live-p eshark-packet-list-buffer)
+		(with-current-buffer eshark-packet-list-buffer
+		  (set-buffer-modified-p nil)
+		  (remove-hook 'kill-buffer-hook 'eshark-stop t)
+		  (kill-buffer)
+		  ))
 	  (condition-case err
 		  (progn
-			(with-current-buffer (setq eshark-packet-list-buffer (get-buffer-create eshark-packet-list-buffer-name))
+			(with-current-buffer (setq eshark-packet-raw-buffer (get-buffer-create eshark-packet-raw-buffer-name))
 			  (read-only-mode -1)
 			  (progn
 				(if pdml-ht (clrhash pdml-ht))
 				(setq cashed-largest-pdml-number 0)
 				(erase-buffer)
-				;; (setq-local eshark-list-minor-mode t)
-				(setq eshark-process
-					  (make-process
-					   :name "Sniffer process"
-					   :buffer eshark-packet-list-buffer
-					   :coding 'utf-8
-					   :command
-					   (if (file-exists-p data-src)
-						   (progn
-							 (setq eshark-pcap-file data-src)
-							 (list "sh" "-c" (format "tshark -l -P -r %s" eshark-pcap-file))
-						   )
-						 (setq eshark-pcap-file tshark-capture-temp-file)
-						 (basic-save-buffer)
-						 (list "sh" "-c" (format "tshark -i %s -l -P -w %s" data-src eshark-pcap-file))
-						 )
-					   :sentinel
-					   (lambda(process evt-string)
-						 (when (string= evt-string "finished\n")
-						   (with-current-buffer (process-buffer process)
-							 (pcap-mode)
-							 (eshark-list-minor-mode)
-							 (setf buffer-file-name nil)
-							 )
-						   )
-						 )
-					   ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
-					   ;; :filter #'eshark-filter
-					   )
+				;; (setq eshark-pipe
+				;; 	  (make-pipe-process
+				;; 	   :name "eshark-pipe"
+				;; 	   ))
+				(if (file-exists-p data-src)
+					(progn
+					  (setq eshark-pcap-file data-src)
+					  (setq eshark-packet-raw-buffer (find-file-noselect data-src))
 					  )
+				  (setq eshark-dump-process
+						(make-process
+						 :name "eshark dump process"
+						 :buffer eshark-packet-raw-buffer
+						 :coding 'no-conversion
+						 ;; :connection-type (cons nil 'pipe)
+						 :command
+						 (progn
+						   (setq eshark-pcap-file tshark-capture-temp-file)
+						   ;; (eshark-list-minor-mode)
+						   ;; (basic-save-buffer)
+						   ;; tshark -i \\.\USBPcap1 -w -|tee zytzsnxl.pcapnp | tshark -r - -Y "usb.device_address == 50"
+						   (list "sh" "-c" (format "tshark -i %s -Q -w -|tee %s" data-src eshark-pcap-file))
+						   )
+						 ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
+						 ;; :filter #'eshark-filter
+						 )
+						)
+				  )
+				(with-current-buffer (setq eshark-packet-list-buffer (get-buffer-create eshark-packet-list-buffer-name))
+				  (progn
+					(erase-buffer)
+					(setq-local eshark-list-minor-mode t)
+					(setq eshark-list-process
+						  (make-process
+						   :name "eshark list process"
+						   :buffer eshark-packet-list-buffer
+						   :coding 'utf-8
+						   :command
+						   ;; tshark  -Y ("_ws.col.protocol == \"USBMS\"") -r -
+						   (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r" "-")
+						   ;; (list "tshark" "-r" "-")
+						   )
+						  )
+					)
+				  )
+				(setq feed-pos 1)
+				;; (run-at-time 0.5 nil 'feed-tshark)
+				(feed-tshark)
 				(setf buffer-file-name eshark-pcap-file)
 				(eshark-reset-detail-buffer)
-				(eshark--retrive-pdml-bg)
+				;; (eshark--retrive-pdml-bg)
 				)
 			  (read-only-mode)
 			  )
@@ -300,14 +375,20 @@
 
 (defun eshark--retrive-pdml-bg(&optional frame-number update-detail-buffer-request)
   (or frame-number (setq frame-number cashed-largest-pdml-number))
+
+  ;; Constantly renaming eshark buffer will make it difficult to manually switch to it.
+  ;; (with-current-buffer eshark-packet-list-buffer
+  ;; 	(let (
+  ;; 		  buffer-file-name
+  ;; 		  )
+  ;; 	  (rename-buffer (format "%s<%d>" eshark-packet-list-buffer-name cashed-largest-pdml-number))
+  ;; 	  )
+  ;; 	)
   (unless (process-live-p eshark-detail-process)
 	;; (eshark-list-buffer-set-mode-line cashed-largest-pdml-number)
-	(with-current-buffer eshark-packet-list-buffer
-	  (rename-buffer (format "%s<%d>" eshark-packet-list-buffer-name cashed-largest-pdml-number))
-	  )
 	;; (message "cashed-largest-pdml-number %d:" cashed-largest-pdml-number)
-	(when-let ((frame-hole (eshark-get-frame-hole frame-number)))
-	  (with-current-buffer (get-buffer-create " pdml-tmp-buffer")
+	(if-let ((frame-hole (eshark-get-frame-hole frame-number)))
+	  (with-current-buffer (get-buffer-create eshakr-packet-pdml-temp-buffer-name)
 		;; (with-temp-buffer
 		(erase-buffer)
 		(let ((inhibit-message t))
@@ -323,12 +404,12 @@
 		  :stdrrr (get-buffer-create "*Packet detail err*")
 		  :sentinel
 		  (lambda(process evt-string)
-			(when (string= evt-string "finished\n")
+			(when (and zyt/real-time-sniffing (string= evt-string "finished\n"))
 			  (let ((inhibit-message t))
 				;; (message "Hexdumping finished")
 				;; (message "cashed-largest-pdml-number %d" cashed-largest-pdml-number)
 				)
-			  ;; (with-current-buffer " pdml-tmp-buffer"
+			  ;; (with-current-buffer eshakr-packet-pdml-temp-buffer-name
 			  (with-current-buffer (process-buffer process)
 				(let* ((dom (libxml-parse-html-region))
 					   (packet-list
@@ -397,6 +478,12 @@
 			)
 		  )
 		 )
+		)
+	  (if zyt/real-time-sniffing
+		  (progn
+			(cl-incf cashed-largest-pdml-number)
+			(run-at-time 0.1 nil #'eshark--retrive-pdml-bg)
+			)
 		)
 	  )
 	)
