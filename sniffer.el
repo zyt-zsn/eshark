@@ -918,7 +918,7 @@
 		   (frame-number (or target-frame-number (eshark--get-current-frame-number 'list-buffer)))
 		   (proto-list (eshark-get-pdml frame-number eshark-pcap-file))
 		   )
-	  (with-current-buffer (setq eshark-packet-details-buffer (or eshark-packet-details-buffer (get-buffer-create eshark-packet-pdml-buffer-name)))
+	  (with-current-buffer (setq eshark-packet-details-buffer (or (and (buffer-live-p eshark-packet-details-buffer) eshark-packet-details-buffer) (get-buffer-create eshark-packet-pdml-buffer-name)))
 		  (read-only-mode -1)
 		  (erase-buffer)
 		  ;; (--map
@@ -1074,6 +1074,7 @@
 	("...或选中" . ||)
 	("...且不选中" . &&!)
 	("...或不选中" . ||!)
+	("编辑" . edit)
 	("...清除所有" . clear)
 	))
 (defvar eshark-filter-history nil)
@@ -1103,7 +1104,7 @@
 													 (if	(or
 															 (null eshark-display-filter)
 															 (string= "" eshark-display-filter))
-														 (member (cdr arg) '(yes !))
+														 (member (cdr arg) '(yes ! edit))
 													   t
 													   )
 													 )
@@ -1128,6 +1129,14 @@
 	   (list 'eshark-display-filter
 			 (pcase choice
 			   ('clear "")
+			   ('edit
+				(read-string "display filter: " (concat
+												 eshark-display-filter
+												 (if (string= "" eshark-display-filter)
+													 ""
+												   "&&")
+												 "(" name " == " show ")") 'eshark-filter-history eshark-display-filter)
+				)
 			   ('yes (concat "(" name " == " show ")"))
 			   ('! (concat "!(" name " == " show ")"))
 			   ((pred (lambda(arg)
