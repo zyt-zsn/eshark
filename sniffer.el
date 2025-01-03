@@ -1032,7 +1032,7 @@
 		(cur-line (line-number-at-pos))
 		(cur-buffer (current-buffer))
 		(target-frame-number
-		 (if eshark--follow-mode
+		 (if (and (get-buffer-window eshark-packet-list-buffer) eshark--follow-mode)
 			 (eshark--moveto-target-frame 'list-buffer cur-frame-number (if (eq 1 arg) 'down 'up))
 		   (+ arg cur-frame-number)
 		   )
