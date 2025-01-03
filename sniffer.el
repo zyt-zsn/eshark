@@ -232,7 +232,9 @@
 						   ;; (eshark-list-minor-mode)
 						   ;; (basic-save-buffer)
 						   ;; tshark -i \\.\USBPcap1 -w -|tee zytzsnxl.pcapnp | tshark -r - -Y "usb.device_address == 50"
-						   (list "sh" "-c" (format "tshark -i %s -Q -w -|tee %s" data-src eshark-pcap-file))
+						   ;; (list "sh" "-c" (format "tshark -i %s -Q -w -|tee %s" data-src eshark-pcap-file))
+						   ;; 使用内存缓冲区，减少临时文件磁盘写操作
+						   (list "sh" "-c" (format "tshark -i %s -Q -w -" data-src))
 						   )
 						 ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
 						 ;; :filter #'eshark-filter
@@ -259,7 +261,8 @@
 				(setq feed-pos 1)
 				;; (run-at-time 0.5 nil 'feed-tshark)
 				(feed-tshark)
-				(setf buffer-file-name eshark-pcap-file)
+				;; 不再使用临时文件，避免磁盘写操作
+				;; (setf buffer-file-name eshark-pcap-file)
 				(eshark-reset-detail-buffer)
 				;; (eshark--retrive-pdml-bg)
 				)
@@ -320,7 +323,7 @@
 	)
   )
 (defun eshark-get-pdml(frame-number &optional pcap-file)
-  (or pcap-file (setq pcap-file tshark-capture-temp-file))
+  (or pcap-file (setq pcap-file eshark-pcap-file))
   (or pdml-ht (setq pdml-ht (make-hash-table :test 'equal)))
   (or (gethash frame-number pdml-ht)
 	  ;; (puthash
@@ -1388,7 +1391,19 @@
 				  (interactive)
 				  (eshark-view-pkt-content 'switch-to-detail-buffer)))
 	(keymap-set map "C-c C-f" #'eshark-toggle-follow-mode)
-	(keymap-set map "s" #'eshark-stop)
+	(keymap-set map "s"
+				(lambda()
+				  (interactive)
+				  (with-current-buffer eshark-packet-raw-buffer
+					(let (
+						  (coding-system-for-read 'binary)
+						  (coding-system-for-write 'binary)
+						  )
+					  (save-buffer)
+					  )
+					)
+				  )
+				)
 	(keymap-set map "t" #'eshark-toggle)
 	(keymap-set map "<tab>" #'eshark-swith-window)
 	map
