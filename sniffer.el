@@ -27,7 +27,9 @@
 ;; (setq my-process (zyt/run-shell-command-and-capture-process "ls -l | grep exe" "*Shell Command Output*"))
 ;; (setq my-process (zyt/run-shell-command-and-capture-process "dumpcap -q -i \\\\Device\\\\NPF_{D82798C5-0AD2-4EFE-9112-3FC3A5E41F66} -w -|tee d:/temp/zytxlzsn.pcapng | tshark -r -&" "*Shell Command Output*"))
 
-(defcustom tshark-capture-temp-file "d:/temp/zytxlzsn.pcapng" "Temporary file when capture network packets")
+;; [[**  (bookmark--jump-via "("tshark temp-dir" (front-context-string . "temp-dir <direct") (rear-context-string . "the default.\n\n--") (position . 36055) (last-modified 26495 38231 990368 0) (location . "https://www.wireshark.org/docs/man-pages/tshark.html") (handler . eww-bookmark-jump) (defaults "tshark(1)" "*eww*"))" 'switch-to-buffer-other-window)  **]]
+(defcustom tshark-capture-temp-dir "d:/temp/" "Specifies the directory into which temporary files (including capture files) are to be written")
+(defcustom tshark-capture-temp-file (concat tshark-capture-temp-dir "zytxlzsn.pcapng") "Temporary file when capture network packets")
 (defvar eshark-pcap-file nil)
 (defun set-filter(symbol value)
   (let* ((orig-value
@@ -57,18 +59,26 @@
 					 :buffer eshark-packet-list-buffer
 					 :coding 'utf-8
 					 :command
-					 (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r" "-" )
+					 (if eshark-buffer-mode
+						 (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r" "-")
+					   (list "tshark" "-i" data-src "-Y" eshark-display-filter "-P" "-w" eshark-pcap-file)
+					   )
+					 ;; (list "tshark" "-i" data-src "-P" "-w" eshark-pcap-file)
+					 ;; (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r"  "-")
 					 )
 					)
 			  )
-			(setq feed-pos 1)
-			(feed-tshark)
+			(when eshark-buffer-mode
+			  (setq feed-pos-list 1)
+			  (feed-tshark-list)
+			  )
 			)
 		  )
 	  ((error) (set-default symbol orig-value))
 	  )
 	)
   )
+
 (defcustom eshark-display-filter ""
   "Display filter"
   :initialize #'custom-initialize-default
@@ -82,12 +92,17 @@
 (defcustom eshark-follow-peer1-color
   "green" 
   "Color for the second node")
+(defcustom eshark-buffer-mode
+  nil
+  "eshark working mode option: buffer or temp-file"
+  )
 
 (defvar zyt/real-time-sniffing nil)
-(defvar eshark-process nil)
 (defvar eshark-dump-process nil)
 (defvar eshark-list-process nil)
 (defvar eshark-detail-process nil)
+(defvar eshark-hex-process nil)
+(defvar eshark-follow-process nil)
 (defconst eshark-packet-list-buffer-name "*Packet list*" "Sniffer buffer of network packets")
 (defconst eshark-packet-raw-buffer-name " *Packet raw data* " "Raw eshark data buffer of network packets")
 (defconst eshark-packet-details-buffer-name "*Packet detail info*")
@@ -112,11 +127,12 @@
 		(if (process-live-p it)
 			(kill-process it)
 		  )
-		(list eshark-process eshark-dump-process eshark-list-process eshark-detail-process)) 
+		(list eshark-list-process eshark-detail-process eshark-dump-process eshark-hex-process)) 
 		;; (kill-buffer eshark-packet-list-buffer)
 		;; (sleep-for 0 1000)
 		;; (delete-file tshark-capture-temp-file)
 		(setq zyt/real-time-sniffing nil)
+		(cancel-timer eshark-feed-raw-packet-timer)
 		)
 	)
   )
@@ -143,8 +159,23 @@
 		 )
 	(push (cons "本地文件" "infile") option-list)
 	(let* (
-		  (selection (alist-get
-					  (completing-read
+		   ;; (selection (alist-get
+		   ;; 			   (completing-read
+		   ;; 				"Interface to capture: "
+		   ;; 				option-list
+		   ;; 				(lambda(arg)
+		   ;; 				  t
+		   ;; 				  )
+		   ;; 				nil
+		   ;; 				nil
+		   ;; 				t
+		   ;; 				)
+		   ;; 			   option-list
+		   ;; 			   nil
+		   ;; 			   nil
+		   ;; 			   'string=
+		   ;; 			   )))
+		  (selection (completing-read
 					   "Interface to capture: "
 					   option-list
 					   (lambda(arg)
@@ -153,24 +184,21 @@
 					   nil
 					   nil
 					   t
-					   )
-					  option-list
-					  nil
-					  nil
-					  'string=
-					  )))
+					   )))
 	  (if (string= "infile" selection)
 		  (read-file-name "pcapng文件:" )
 		  ;; (read-file-name "test:" nil nil t nil (lambda(filename)
 		  ;; 										  (string= "pcapng" (file-name-extension filename))
 		  ;; 										  ))
-		(regexp-quote selection)
+		;; (regexp-quote selection)
+		selection
 		)
 	  )
 	)
   )
-(defvar feed-pos 1)
-(defun feed-tshark()
+(defvar feed-pos-list 1)
+(defvar eshark-feed-raw-packet-timer (timer-create))
+(defun feed-tshark-list()
   (when (process-live-p eshark-list-process)
 	  (with-current-buffer
 		  eshark-packet-raw-buffer
@@ -179,15 +207,71 @@
 			  ;; (coding-system-for-write 'no-conversion)
 			  (cur-end (point-max))
 			  )
-		  (when (> cur-end feed-pos)
-			(process-send-region eshark-list-process feed-pos cur-end)
-			(setq feed-pos cur-end)
+		  (when (> cur-end feed-pos-list)
+			(process-send-region eshark-list-process feed-pos-list cur-end)
+			(setq feed-pos-list cur-end)
 			)
 		  )
 		)
-	(run-at-time 0.1 nil 'feed-tshark)
+	  (setq eshark-feed-raw-packet-timer
+			(run-at-time 0.5 nil 'feed-tshark-list))
 	)
   )
+
+(defun feed-tshark-pdml()
+  (when (process-live-p eshark-detail-process)
+	  (with-current-buffer
+		  eshark-packet-raw-buffer
+		(let (
+			  (cur-end (point-max))
+			  (feed-pos-pdml 1)
+			  )
+		  (when (> cur-end feed-pos-pdml)
+			(process-send-region eshark-detail-process feed-pos-pdml cur-end)
+			(process-send-eof eshark-detail-process)
+			)
+		  )
+		)
+	)
+  )
+
+(defun feed-tshark-hex()
+  (when (process-live-p eshark-hex-process)
+	  (with-current-buffer
+		  eshark-packet-raw-buffer
+		(let (
+			  (cur-end (point-max))
+			  (feed-pos-hex 1)
+			  )
+		  (when (> cur-end feed-pos-hex)
+			(process-send-region eshark-hex-process feed-pos-hex cur-end)
+			(condition-case error
+				(process-send-eof eshark-hex-process)
+			  (t nil)
+			  )
+			)
+		  )
+		)
+	)
+  )
+
+(defun feed-tshark-follow()
+  (when (process-live-p eshark-follow-process)
+	(with-current-buffer
+		eshark-packet-raw-buffer
+	  (let (
+			(cur-end (point-max))
+			(feed-pos-follow 1)
+			)
+		(when (> cur-end feed-pos-follow)
+		  (process-send-region eshark-follow-process feed-pos-follow cur-end)
+		  (process-send-eof eshark-follow-process)
+		  )
+		)
+	  )
+	)
+  )
+
 ;;;###autoload
 (defun eshark-toggle()
   (interactive)
@@ -197,83 +281,71 @@
 		  (cle current-language-environment)
 		  (data-src (eshark-select-intface))
 		  )
-	  (when (buffer-live-p eshark-packet-list-buffer)
-		(with-current-buffer eshark-packet-list-buffer
-		  (set-buffer-modified-p nil)
-		  (remove-hook 'kill-buffer-hook 'eshark-stop t)
-		  (kill-buffer)
-		  ))
 	  (condition-case err
 		  (progn
-			(with-current-buffer (setq eshark-packet-raw-buffer (get-buffer-create eshark-packet-raw-buffer-name))
-			  (read-only-mode -1)
-			  (progn
-				(if pdml-ht (clrhash pdml-ht))
-				(setq cashed-largest-pdml-number 0)
-				(erase-buffer)
-				;; (setq eshark-pipe
-				;; 	  (make-pipe-process
-				;; 	   :name "eshark-pipe"
-				;; 	   ))
-				(if (file-exists-p data-src)
-					(progn
-					  (setq eshark-pcap-file data-src)
-					  (setq eshark-packet-raw-buffer (find-file-noselect data-src))
-					  )
-				  (setq eshark-dump-process
-						(make-process
-						 :name "eshark dump process"
-						 :buffer eshark-packet-raw-buffer
-						 :coding 'no-conversion
-						 ;; :connection-type (cons nil 'pipe)
-						 :command
-						 (progn
-						   (setq eshark-pcap-file tshark-capture-temp-file)
-						   ;; (eshark-list-minor-mode)
-						   ;; (basic-save-buffer)
-						   ;; tshark -i \\.\USBPcap1 -w -|tee zytzsnxl.pcapnp | tshark -r - -Y "usb.device_address == 50"
-						   ;; (list "sh" "-c" (format "tshark -i %s -Q -w -|tee %s" data-src eshark-pcap-file))
-						   ;; 使用内存缓冲区，减少临时文件磁盘写操作
-						   (list "sh" "-c" (format "tshark -i %s -Q -w -" data-src))
-						   )
-						 ;; (list "sh" "-c" (format "tshark -i \\\\Device\\\\NPF_{D359831E-00E8-4523-8291-BDC9E119EF8F} -l -P -w %s" tshark-capture-temp-file))
-						 ;; :filter #'eshark-filter
-						 )
-						)
-				  )
-				(with-current-buffer (setq eshark-packet-list-buffer (get-buffer-create eshark-packet-list-buffer-name))
-				  (progn
-					(erase-buffer)
-					(setq-local eshark-list-minor-mode t)
-					(setq eshark-list-process
-						  (make-process
-						   :name "eshark list process"
-						   :buffer eshark-packet-list-buffer
-						   :coding 'utf-8
-						   :command
-						   ;; tshark  -Y ("_ws.col.protocol == \"USBMS\"") -r -
-						   (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r" "-")
-						   ;; (list "tshark" "-r" "-")
-						   )
-						  )
-					)
-				  )
-				(setq feed-pos 1)
-				;; (run-at-time 0.5 nil 'feed-tshark)
-				(feed-tshark)
-				;; 不再使用临时文件，避免磁盘写操作
-				;; (setf buffer-file-name eshark-pcap-file)
-				(eshark-reset-detail-buffer)
-				;; (eshark--retrive-pdml-bg)
-				)
-			  (read-only-mode)
+			(clrhash pdml-ht)
+			(setq cashed-largest-pdml-number 0)
+			(if (file-exists-p data-src)
+				(setq eshark-pcap-file data-src)
+			  (setq eshark-pcap-file nil)
+			  ;; (if eshark-buffer-mode
+			  ;; 	  (setq eshark-pcap-file nil)
+			  ;; 	(setq eshark-pcap-file tshark-capture-temp-file)
+			  ;; 	)
 			  )
-			(setq zyt/real-time-sniffing t)
+			(with-current-buffer (setq eshark-packet-list-buffer (get-buffer-create eshark-packet-list-buffer-name))
+			  (read-only-mode -1)
+			  (erase-buffer)
+			  (setq-local eshark-list-minor-mode t)
+			  (setq-local kill-buffer-hook '(t))
+			  (add-to-list 'kill-buffer-hook #'eshark-stop)
+			)
+			(eshark-reset-detail-buffer)
+			(setq process-creation-time (current-time))
+			(setq eshark-list-process (make-process
+									   :name "eshark list process"
+									   :buffer eshark-packet-list-buffer
+									   ;; eshark-pcap-file 支持中文接口名需要设置coding
+									   :coding (cons 'utf-8 'chinese-gb18030-dos)
+									   ;; :coding 'utf-8
+									   :command
+									   (if eshark-buffer-mode
+										   (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r"  "-")
+										 ;; (list "tshark" "-i" data-src "-P" "-w" eshark-pcap-file)
+										 ;; [[**  (bookmark--jump-via "("tshark display filters are not supported when caputring and saving the captured packets" (buffer-name . "*eww*") (front-context-string . "display filters ") (rear-context-string . "tion. Note that\n") (front-context-region-string) (rear-context-region-string) (visits . 0) (time 26495 32454 252396 0) (created 26495 32454 252396 0) (position . 5032) (location . "https://www.wireshark.org/docs/man-pages/tshark.html") (handler . eww-bookmark-jump))" 'switch-to-buffer-other-window)  **]]
+										 (list "tshark" "-i" data-src "-Y" eshark-display-filter "-P" "--temp-dir" "d:/temp/")
+									   )))
+			(if (null eshark-buffer-mode)
+				(while 
+				  (null (setq eshark-pcap-file
+						(car (--filter
+							  ;; (time-less-p process-creation-time (file-attribute-access-time (file-attributes "d:/temp/wireshark_以太网 2BNbrsK.pcapng"))) 
+							  ;; (directory-files tshark-capture-temp-dir 'full-name (concat "以太网 2" "\.*\.pcapng$"))
+							  (time-less-p process-creation-time (file-attribute-modification-time (file-attributes it))) 
+							  (directory-files tshark-capture-temp-dir 'full-name (concat data-src "\.*\.pcapng$"))
+							  ))))
+				  (sleep-for 0.1)
+				  )
+			  (with-current-buffer (setq eshark-packet-raw-buffer (get-buffer-create eshark-packet-raw-buffer-name))
+				(read-only-mode -1)
+				(erase-buffer)
+				)
+			  (setq eshark-dump-process
+					(make-process
+					 :name "eshark dump process"
+					 :buffer eshark-packet-raw-buffer
+					 :coding 'no-conversion
+					 ;; 使用内存缓冲区，减少临时文件磁盘写操作
+					 :command (list "tshark" "-i"  data-src "-Q" "-w" "-" )
+					 )
+					)
+			  (setq feed-pos-list 1)
+			  (feed-tshark-list)
+			  )
+			(eshark--retrive-pdml-bg)
 			(switch-to-buffer eshark-packet-list-buffer)
-			(setq-local kill-buffer-hook '(t))
-			(add-to-list 'kill-buffer-hook #'eshark-stop)
-			;; Add sleep guarding time due to the asynchronous mode of command:`&
-			(sleep-for 3))
+			(setq zyt/real-time-sniffing t)
+		)
 		(t (set-language-environment cle))
 		)
 	  )
@@ -367,7 +439,11 @@
 		  (nconc (propertized-buffer-identification "%b")
 				 (list
 				  (propertize
-				   (format "<%d>" cashed-largest-pdml-number)
+				   (concat
+					(format "<%d>" cashed-largest-pdml-number)
+					(if eshark--follow-mode
+						"<F>"
+					  ""))
 				   'face '(:foreground "yellow")
 				   )
 				  )
@@ -375,9 +451,41 @@
 		  )
 	)
   )
-
+(defun eshark--get-frame-number-list()
+  (with-current-buffer eshark-packet-list-buffer
+	(save-excursion
+	  (goto-line 1) 
+	  (let (ret)
+		(while (= 0
+				  (progn 
+					(if-let (
+							 (line (thing-at-point 'line))
+							 (match (progn
+									  (string-match eshark--buffer-frame-number-regexp line)
+									  (match-string 1 line)))
+							 )
+						  (setq ret (cons (string-to-number match) ret))
+					  )
+					(forward-line 1)
+					)
+				  )
+		  )
+		(reverse ret)
+		)
+	  )
+	)
+  )
+(defvar eshark-frame-number-list nil)
 (defun eshark--retrive-pdml-bg(&optional frame-number update-detail-buffer-request)
-  (or frame-number (setq frame-number cashed-largest-pdml-number))
+  (setq eshark-frame-number-list (eshark--get-frame-number-list))
+  (or frame-number
+	  (setq frame-number
+			(setq cashed-largest-pdml-number
+				  (or (--first
+						(>= it cashed-largest-pdml-number)
+						eshark-frame-number-list)
+					  cashed-largest-pdml-number)
+				  )))
 
   ;; Constantly renaming eshark buffer will make it difficult to manually switch to it.
   ;; (with-current-buffer eshark-packet-list-buffer
@@ -388,7 +496,7 @@
   ;; 	  )
   ;; 	)
   (unless (process-live-p eshark-detail-process)
-	;; (eshark-list-buffer-set-mode-line cashed-largest-pdml-number)
+	(eshark-list-buffer-set-mode-line cashed-largest-pdml-number)
 	;; (message "cashed-largest-pdml-number %d:" cashed-largest-pdml-number)
 	(if-let ((frame-hole (eshark-get-frame-hole frame-number)))
 	  (with-current-buffer (get-buffer-create eshakr-packet-pdml-temp-buffer-name)
@@ -402,12 +510,20 @@
 		 (make-process
 		  :name "net packet detail process"
 		  :buffer (current-buffer)
-		  :command (list "sh" "-c" (format "tshark -T pdml -r %s -Y \"frame.number\>=%d and frame.number\<=%d\"" eshark-pcap-file (car frame-hole) (cdr frame-hole)))
+		  ;; :command (list "sh" "-c" (format "tshark -T pdml -r %s -Y \"frame.number\>=%d and frame.number\<=%d\"" eshark-pcap-file (car frame-hole) (cdr frame-hole)))
+		  :command (list "tshark" "-T" "pdml" "-Y" (format "frame.number\>=%d && frame.number\<=%d" (car frame-hole) (cdr frame-hole)) "-r" (if eshark-buffer-mode "-" eshark-pcap-file))
+		  ;; :command (list "tshark" "-T" "pdml" "-Y" "frame.number==1"  "-r" "-" )
+		  ;; :command (list "tshark" "-T" "pdml" "-r" "-" )
+		  ; (list "tshark" "-Y" (format "%s" eshark-display-filter) "-r" "-")
+		  ;; eshark-pcap-file 支持中文文件名需要设置coding
 		  :coding (cons 'utf-8 'chinese-gb18030-dos)
+		  ;; :coding 'utf-8
 		  :stdrrr (get-buffer-create "*Packet detail err*")
 		  :sentinel
 		  (lambda(process evt-string)
-			(when (and zyt/real-time-sniffing (string= evt-string "finished\n"))
+			;; (message "Packet detail process sentinel: %s" evt-string)
+			;; (when (and zyt/real-time-sniffing (string= evt-string "finished\n"))
+			(when (string= evt-string "finished\n")
 			  (let ((inhibit-message t))
 				;; (message "Hexdumping finished")
 				;; (message "cashed-largest-pdml-number %d" cashed-largest-pdml-number)
@@ -436,10 +552,27 @@
 					  ;; 更新最新请求
 					  (setq frame-number eshark-target-frame-number))
 				  (--map-indexed
-				   (let ((proto-list (dom-children it)))
-					 (puthash (+ (car frame-hole) it-index) proto-list pdml-ht)
+				   (when-let* (
+						  (proto-list (progn
+										;; (message "it-index-->%d" it-index)
+										(dom-children it)
+										)
+									  )
+						  ;; [[**  (bookmark--jump-via "("Frame number" (filename . "~/.emacs.d/straight/repos/eshark/pdml_samples/sh-xxxxxx.xml") (front-context-string . "  <proto name=\"f") (rear-context-string . "4\"/>\n  </proto>\n") (position . 875) (last-modified 26487 28620 853049 0) (defaults "sh-xxxxxx.xml"))" 'switch-to-buffer-other-window)  **]]
+						  (frame (alist-get 'showname (cadr (nth 1 proto-list))))
+						  (match
+						   (progn
+							 ;; (message "frame-->%s" frame)
+							 (string-match "Frame \\([[:digit:]]*\\):" frame)
+							 (match-string 1 frame))
+						   )
+						  (pdml-frame-number (string-to-number match))
+						  )
+					 ;; (unless (gethash pdml-frame-number pdml-ht)
+					   (puthash pdml-frame-number proto-list pdml-ht)
+					   ;; )
 					 (when
-						 (and update-detail-buffer-request (= frame-number (+ it-index (car frame-hole))))
+						 (and update-detail-buffer-request (= frame-number pdml-frame-number))
 					   (eshark-view-pkt-content 'switch-to-detail-buffer frame-number) 
 					   ;; (with-current-buffer eshark-packet-pdml-buffer-name
 					   ;; 	 (read-only-mode -1)
@@ -481,6 +614,9 @@
 			)
 		  )
 		 )
+		(if eshark-buffer-mode
+			(feed-tshark-pdml)
+		  )
 		)
 	  (if zyt/real-time-sniffing
 		  (progn
@@ -560,70 +696,78 @@
 	(with-current-buffer (or eshark-packet-bytes-buffer (setq eshark-packet-bytes-buffer (get-buffer-create eshark-packet-bytes-buffer-name)))
 	  (read-only-mode -1)
 	  ;; (erase-buffer)
-	  (make-process
-	   :name "net packet hexdump process"
-	   :buffer nil;;(current-buffer)
-	   :command (list "sh" "-c" (format "tshark -r %s --hexdump delimit --hexdump %s -Y \"frame.number==%d\"" eshark-pcap-file (if frames-only "frames" "all") frame-number))
-	   :coding 'chinese-gb18030-dos
-	   :stdrrr (get-buffer-create "*Packet hexdump err*")
-	   :filter
-	   ;; [[**  (bookmark--jump-via "("(elisp) Filter Functions" (front-context-string . "File: elisp.info") (rear-context-string) (position . 3314736) (last-modified 26444 6735 918922 0) (filename . "d:/Software/Editor/Emacs/emacs-29.4/share/info/elisp") (info-node . "Filter Functions") (handler . Info-bookmark-jump) (defaults "(elisp) Filter Functions" "elisp" "Filter Functions" "*info*"))" 'switch-to-buffer-other-window)  **]]
-	   (lambda (proc string)
-		 ;; (when (buffer-live-p (process-buffer proc))
-		 (when (buffer-live-p eshark-packet-bytes-buffer)
-		   ;; (display-buffer eshark-packet-bytes-buffer)
-		   (with-current-buffer eshark-packet-bytes-buffer
-			 ;; (read-only-mode -1)
-			 ;; (erase-buffer)
-			 (if frames-only
-				 ;; (insert string)
-				 (setq eshark-packet-bytes-buffer-str (concat eshark-packet-bytes-buffer-str string))
-			   (setq eshark-packet-bytes-buffer-str (concat eshark-packet-bytes-buffer-str string))
-			   ;; (insert string)
-			   ;; (insert (progn (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" string) (match-string 1 string)))
+	  (setq eshark-hex-process
+			(make-process
+			 :name "net packet hexdump process"
+			 ;; :buffer nil;;(current-buffer)
+			 :buffer (get-buffer-create "*hex dump temp*")
+			 ;; :command (list "sh" "-c" (format "tshark -r %s --hexdump delimit --hexdump %s -Y \"frame.number==%d\"" eshark-pcap-file (if frames-only "frames" "all") frame-number))
+			 :command (list "tshark" "--hexdump" "delimit" "--hexdump" (if frames-only "frames" "all") "-Y" (format "frame.number==%d" frame-number) "-r" (if eshark-buffer-mode "-" eshark-pcap-file))
+			 :coding (cons 'utf-8 'chinese-gb18030-dos)
+			 ;; :coding 'utf-8
+			 :stdrrr (get-buffer-create "*Packet hexdump err*")
+			 :filter
+			 ;; [[**  (bookmark--jump-via "("(elisp) Filter Functions" (front-context-string . "File: elisp.info") (rear-context-string) (position . 3314736) (last-modified 26444 6735 918922 0) (filename . "d:/Software/Editor/Emacs/emacs-29.4/share/info/elisp") (info-node . "Filter Functions") (handler . Info-bookmark-jump) (defaults "(elisp) Filter Functions" "elisp" "Filter Functions" "*info*"))" 'switch-to-buffer-other-window)  **]]
+			 (lambda (proc string)
+			   ;; (when (buffer-live-p (process-buffer proc))
+			   (when (buffer-live-p eshark-packet-bytes-buffer)
+				 ;; (display-buffer eshark-packet-bytes-buffer)
+				 (with-current-buffer eshark-packet-bytes-buffer
+				   ;; (read-only-mode -1)
+				   ;; (erase-buffer)
+				   (if frames-only
+					   ;; (insert string)
+					   (setq eshark-packet-bytes-buffer-str (concat eshark-packet-bytes-buffer-str string))
+					 (setq eshark-packet-bytes-buffer-str (concat eshark-packet-bytes-buffer-str string))
+					 ;; (insert string)
+					 ;; (insert (progn (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" string) (match-string 1 string)))
+					 )
+				   ;; (message "eshark-packet-bytes-buffer-str len->%d" (length eshark-packet-bytes-buffer-str))
+				   ;; (read-only-mode)
+				   )
+				 )
 			   )
-			   ;; (message "eshark-packet-bytes-buffer-str len->%d" (length eshark-packet-bytes-buffer-str))
-			 ;; (read-only-mode)
-			 )
-		   )
-		 )
-	   :sentinel
-	   ;; #'zyt-sentinal
-	   ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
-	   ;; #'ignore
-	   (lambda(proc evt-string)
-		 ;; (if (string= evt-string "finished\n")
-			 ;; (setq zyt-sniffer--vier-pkt-hex-timer nil))
-		 (when (and
-				(= eshark-pkt-hex-lastest-number frame-number)
-				(string= evt-string "finished\n"))
-		   (let ((inhibit-message t))
-			 (message "finished frame-number--->%d" frame-number)
-			 )
-		   ;; (with-current-buffer (process-buffer proc)
-		   (unless frames-only
-			 (setq eshark-packet-bytes-buffer-str
-				   (progn
-					 (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" eshark-packet-bytes-buffer-str)
-					 (match-string 1 eshark-packet-bytes-buffer-str)
-					 ))
-			 )
-		   (with-current-buffer eshark-packet-bytes-buffer
-			 (read-only-mode -1)
-			 (erase-buffer)
-			 (insert eshark-packet-bytes-buffer-str)
-			 (if (and highlight-pos highlight-size)
-				 (eshark-highlight-hex-portion highlight-pos highlight-size)
+			 :sentinel
+			 ;; #'zyt-sentinal
+			 ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
+			 ;; #'ignore
+			 (lambda(proc evt-string)
+			   ;; (if (string= evt-string "finished\n")
+			   ;; (setq zyt-sniffer--vier-pkt-hex-timer nil))
+			   (when (and
+					  (= eshark-pkt-hex-lastest-number frame-number)
+					  (string= evt-string "finished\n"))
+				 (let ((inhibit-message t))
+				   (message "finished frame-number--->%d" frame-number)
+				   )
+				 ;; (with-current-buffer (process-buffer proc)
+				 (unless frames-only
+				   (setq eshark-packet-bytes-buffer-str
+						 (progn
+						   (string-match "Reassembled TCP ([[:digit:]]++ bytes):\n\\(\\(.\\|\n\\)*\\)" eshark-packet-bytes-buffer-str)
+						   (match-string 1 eshark-packet-bytes-buffer-str)
+						   ))
+				   )
+				 (with-current-buffer eshark-packet-bytes-buffer
+				   (read-only-mode -1)
+				   (erase-buffer)
+				   (insert eshark-packet-bytes-buffer-str)
+				   (if (and highlight-pos highlight-size)
+					   (eshark-highlight-hex-portion highlight-pos highlight-size)
+					 )
+				   (read-only-mode)
+				   (eshark-bytes-minor-mode)
+				   (if frames-only
+					   (rename-buffer (concat eshark-packet-bytes-buffer-name ":" (number-to-string frame-number)))
+					 (rename-buffer (concat eshark-reassembled-hex-buffer-name  ":" (number-to-string frame-number))))
+				   )
+				 )
 			   )
-			 (read-only-mode)
-			 (eshark-bytes-minor-mode)
-			 (if frames-only
-				 (rename-buffer (concat eshark-packet-bytes-buffer-name ":" (number-to-string frame-number)))
-			   (rename-buffer (concat eshark-reassembled-hex-buffer-name  ":" (number-to-string frame-number))))
 			 )
-		   )
-		 )
-	   )
+			)
+	  (if eshark-buffer-mode
+		  (feed-tshark-hex)
+		)
 	  (unless eshark-auto-switch-to-detail-buffer
 		(pop-to-buffer cur-buffer)
 		)
@@ -760,6 +904,7 @@
 	(_ (error "Unknown buffer %s" buffer))
 	)
   )
+
 (defun eshark--follow-stream(prot filter)
   ;; [[**  (bookmark--jump-via "("tshark flow" (front-context-string . "-z follow,prot,m") (rear-context-string . "all TCP frames\n\n") (position . 55276) (last-modified 26454 31767 142125 0) (location . "https://www.wireshark.org/docs/man-pages/tshark.html") (handler . eww-bookmark-jump) (defaults "tshark(1)" "*eww*"))" 'switch-to-buffer-other-window)  **]]
   ;; [[**  (bookmark--jump-via "("tshark(1)" (front-context-string . "-z follow,prot,m") (rear-context-string . " TCP frames\n   \n") (position . 62919) (last-modified 26454 43616 524510 0) (filename . "https://www.wireshark.org/docs/man-pages/tshark.html") (url . "https://www.wireshark.org/docs/man-pages/tshark.html") (handler . bookmark-w3m-bookmark-jump) (defaults "tshark(1)" "*w3m*"))" 'switch-to-buffer-other-window)  **]]
@@ -773,94 +918,102 @@
 	  ;; (yaml-mode)
 	  (setq buffer-file-coding-system 'utf-8-dos)
 	  (message "start yaml processing...")
-	  (make-process
-	   :name "eshark yaml process"
-	   :buffer (current-buffer)
-	   :command (list "sh" "-c" (format "tshark -r %s -q -z \"follow,%s,yaml,%s\"" eshark-pcap-file prot filter))
-	   :coding (cons 'utf-8-dos 'utf-8-unix)
-	   ;; :coding (cons 'binary 'binary)
-	   :stdrrr (get-buffer-create "*eshark yaml err*")
-	   :sentinel
-	   ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
-	   ;; #'ignore
-	   (lambda(proc evt-string)
-		 (when (string= evt-string "finished\n")
-		   (with-current-buffer (process-buffer proc)
-			 (let ((max-lisp-eval-depth 50000))
-			   (setq eshark-follow-yaml (yaml-parse-string (buffer-string)))
-			   )
-			 )
-		   (with-current-buffer (setq eshark-follow-ascii-buffer (get-buffer-create eshark-follow-ascii-buffer-name))
-			 (when-let* (
-						 (packets  (gethash 'packets eshark-follow-yaml))
-						 (_null-check (null (eq packets :null)))
-						 )
-			   (read-only-mode -1)
-			   (erase-buffer)
-			   (hide-ctrl-M)
-			   ;; (--map-indexed
-			   (let (
-					 (prev-packet-num -1)
-					 ;; multiple yaml packet may belong to same network packet
-					 ;; ref [[**  (bookmark--jump-via "("yaml demo" (filename . "~/org-roam-files/data/3e/50e3f4-6f6e-4cf1-bfb5-d2aa5b381be7/sh-vCwffn.xml") (front-context-string . "peers:\n  - peer:") (rear-context-string) (position . 1) (last-modified 26457 19396 998073 0) (defaults "sh-vCwffn.xml"))" 'switch-to-buffer-other-window)  **]]
-					 (successive-packets-pos-s 1)
+	  (setq eshark-follow-process
+			(make-process
+			 :name "eshark yaml process"
+			 :buffer (current-buffer)
+			 ;; :command (list "sh" "-c" (format "tshark -r %s -q -z \"follow,%s,yaml,%s\"" eshark-pcap-file prot filter))
+			 :command (list "tshark" "-q" "-z" (format "follow,%s,yaml,%s" prot filter) "-r" (if eshark-buffer-mode "-" eshark-pcap-file))
+			 ;; 支持中文文件名需要设置coding
+			 :coding (cons 'utf-8-dos 'chinese-gb18030)
+			 ;; :coding 'utf-8
+			 ;; :coding (cons 'binary 'binary)
+			 :stdrrr (get-buffer-create "*eshark yaml err*")
+			 :sentinel
+			 ;; [[**  (bookmark--jump-via "("Remove 'Process finished' message" (filename . "~/org-roam-files/20241201163551-make_process.org") (front-context-string . "* eliminate 'Pro") (rear-context-string . "e: make-process\n") (position . 90) (last-modified 26444 8436 527173 0) (defaults "org-capture-last-stored" "20241201163551-make_process.org"))" 'switch-to-buffer-other-window)  **]] 
+			 ;; #'ignore
+			 (lambda(proc evt-string)
+			   (when (string= evt-string "finished\n")
+				 (with-current-buffer (process-buffer proc)
+				   (let ((max-lisp-eval-depth 50000))
+					 (setq eshark-follow-yaml (yaml-parse-string (buffer-string)))
 					 )
-				 (--map
-				  (let* (
-						 (packet-num (gethash 'packet it))
-						 (peer (gethash 'peer it))
-						 (peer-color (nth peer (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
-						 ;; (peer-color (nth (logand it-index 1) (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
-						 (timestamp (gethash 'timestamp it))
-						 (data (gethash 'data it))
-						 (pos-s (point))
-						 ;; 属于不同peer时插入 newline?
-						 (packet-stream (format "%s"
-												(decode-coding-string
-												 (base64-decode-string data)
-												 'utf-8)
-												))
-						 )
-					(set-text-properties 0 (length packet-stream)
-										 `(
-										   ;; invisible t
-										   packet-num ,packet-num
-										   timestamp ,timestamp
-										   ;; pos-s ,pos-s
-										   face (:foreground ,peer-color)
-										   )
-										 packet-stream
-										 )
-					(unless (= prev-packet-num packet-num)
-					 (add-text-properties successive-packets-pos-s (point)
-										 `(
-										   pos-s ,successive-packets-pos-s
-										   pos-e ,(1- (point))
-										   )) 
-					  )
-					(insert packet-stream)
-					(unless (= prev-packet-num packet-num)
-					  (setq prev-packet-num packet-num)
-					  (setq successive-packets-pos-s pos-s)
-					  (add-text-properties successive-packets-pos-s (point)
-										   `(
-											 pos-s ,successive-packets-pos-s
-											 pos-e ,(1- (point))
-											 ))
+				   )
+				 (with-current-buffer (setq eshark-follow-ascii-buffer (get-buffer-create eshark-follow-ascii-buffer-name))
+				   (when-let* (
+							   (packets  (gethash 'packets eshark-follow-yaml))
+							   (_null-check (null (eq packets :null)))
+							   )
+					 (read-only-mode -1)
+					 (erase-buffer)
+					 (hide-ctrl-M)
+					 ;; (--map-indexed
+					 (let (
+						   (prev-packet-num -1)
+						   ;; multiple yaml packet may belong to same network packet
+						   ;; ref [[**  (bookmark--jump-via "("yaml demo" (filename . "~/org-roam-files/data/3e/50e3f4-6f6e-4cf1-bfb5-d2aa5b381be7/sh-vCwffn.xml") (front-context-string . "peers:\n  - peer:") (rear-context-string) (position . 1) (last-modified 26457 19396 998073 0) (defaults "sh-vCwffn.xml"))" 'switch-to-buffer-other-window)  **]]
+						   (successive-packets-pos-s 1)
+						   )
+					   (--map
+						(let* (
+							   (packet-num (gethash 'packet it))
+							   (peer (gethash 'peer it))
+							   (peer-color (nth peer (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
+							   ;; (peer-color (nth (logand it-index 1) (list eshark-follow-peer0-color eshark-follow-peer1-color))) 
+							   (timestamp (gethash 'timestamp it))
+							   (data (gethash 'data it))
+							   (pos-s (point))
+							   ;; 属于不同peer时插入 newline?
+							   (packet-stream (format "%s"
+													  (decode-coding-string
+													   (base64-decode-string data)
+													   'utf-8)
+													  ))
+							   )
+						  (set-text-properties 0 (length packet-stream)
+											   `(
+												 ;; invisible t
+												 packet-num ,packet-num
+												 timestamp ,timestamp
+												 ;; pos-s ,pos-s
+												 face (:foreground ,peer-color)
+												 )
+											   packet-stream
+											   )
+						  (unless (= prev-packet-num packet-num)
+							(add-text-properties successive-packets-pos-s (point)
+												 `(
+												   pos-s ,successive-packets-pos-s
+												   pos-e ,(1- (point))
+												   )) 
+							)
+						  (insert packet-stream)
+						  (unless (= prev-packet-num packet-num)
+							(setq prev-packet-num packet-num)
+							(setq successive-packets-pos-s pos-s)
+							(add-text-properties successive-packets-pos-s (point)
+												 `(
+												   pos-s ,successive-packets-pos-s
+												   pos-e ,(1- (point))
+												   ))
+							)
+						  )
+						;; (seq-into packets 'list)
+						packets
+						)
 					   )
-					)
-				  ;; (seq-into packets 'list)
-				  packets
-				  )
+					 (eshark-follow-minor-mode)
+					 (message "yaml process finished")
+					 nil
+					 )
+				   )
 				 )
-			   (eshark-follow-minor-mode)
-			   (message "yaml process finished")
-			   nil
 			   )
 			 )
-		   )
-		 )
-	   )
+			)
+	  (if eshark-buffer-mode
+		  (feed-tshark-follow)
+		)
 	  )
 	(pop-to-buffer cur-buffer)
 	)
@@ -932,14 +1085,17 @@
 		  (read-only-mode)
 		  (eshark-detail-minor-mode)
 		  (goto-char 1)
-		  (progn
-			(cancel-timer zyt-sniffer--vier-pkt-hex-timer)
-			(setq zyt-sniffer--vier-pkt-hex-timer
-				  (run-at-time sniffer-view-hex-timer-delay nil
-							   #'eshark-view-pkt-hex
-							   frame-number
-							   'frames-only
-							   ))
+		  (if (get-buffer-window eshark-packet-bytes-buffer 'visible)
+			  (progn
+				(cancel-timer zyt-sniffer--vier-pkt-hex-timer)
+				(setq zyt-sniffer--vier-pkt-hex-timer
+					  ;; (run-at-time sniffer-view-hex-timer-delay nil
+					  (run-at-time (if eshark-buffer-mode 0.8 0.1) nil
+								   #'eshark-view-pkt-hex
+								   frame-number
+								   'frames-only
+								   ))
+				)
 			)
 		  (unless eshark-auto-switch-to-detail-buffer
 			(pop-to-buffer cur-buffer)
@@ -947,7 +1103,7 @@
 		)
 	(setq eshark-target-frame-number frame-number)
 	(eshark--retrive-pdml-bg frame-number 'update-detail-buffer-request)
-	(setq sniffer-view-detail-timer-delay 0.2)
+	(setq sniffer-view-detail-timer-delay 0.8)
 	)
   )
 (defun eshark-follow-mode-jumpto-relative-frame(&optional arg)
@@ -1068,6 +1224,7 @@
   "Toggle eshark follow mode"
   (interactive)
   (setq eshark--follow-mode (not eshark--follow-mode))
+  (eshark-list-buffer-set-mode-line cashed-largest-pdml-number)
   )
 (defconst filter-choice-alist
   '(
